@@ -72,7 +72,12 @@ final class ProgressMonitor {
         )
     }
 
+    deinit {
+        timer?.cancel()
+    }
+
     func begin() {
+        guard timer == nil else { return }
         let t = DispatchSource.makeTimerSource(queue: queue)
         t.schedule(deadline: .now(), repeating: .milliseconds(80))
         let r = renderer
