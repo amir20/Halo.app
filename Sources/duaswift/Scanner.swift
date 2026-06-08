@@ -33,6 +33,7 @@ final class DiskScanner {
     let apparent: Bool
     let countHardLinks: Bool
     let threadCount: Int
+    let progress: ProgressCounter?
 
     /// Shared work-stack of directories left to traverse. `pending` counts dirs
     /// enqueued-but-not-yet-finished so idle workers know when the scan is done.
@@ -46,10 +47,11 @@ final class DiskScanner {
     private let inodeLock = NSLock()
     private var seen = Set<INode>()
 
-    init(apparent: Bool, countHardLinks: Bool, threadCount: Int) {
+    init(apparent: Bool, countHardLinks: Bool, threadCount: Int, progress: ProgressCounter? = nil) {
         self.apparent = apparent
         self.countHardLinks = countHardLinks
         self.threadCount = max(1, threadCount)
+        self.progress = progress
     }
 
     @inline(__always)
@@ -101,7 +103,12 @@ final class DiskScanner {
             let dir = dirStack.removeLast()
             cond.unlock()
 
+            let beforeEntries = acc.entries
+            let beforeSize = acc.size
             let subdirs = processDirectory(dir, into: acc)
+            progress?.update(files: acc.entries - beforeEntries,
+                             bytes: acc.size - beforeSize,
+                             current: dir)
 
             cond.lock()
             if !subdirs.isEmpty {
@@ -123,6 +130,7 @@ final class DiskScanner {
             return ScanResult(size: 0, entries: 0)
         }
         accumulate(st, into: rootAccum)
+        progress?.update(files: rootAccum.entries, bytes: rootAccum.size, current: root)
         if (UInt32(st.st_mode) & UInt32(S_IFMT)) != UInt32(S_IFDIR) {
             return ScanResult(size: rootAccum.size, entries: rootAccum.entries)
         }

@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(Darwin)
+import Darwin
+#endif
 
 let helpText = """
 duaswift — a tiny Swift reimplementation of `dua aggregate`
@@ -13,6 +16,7 @@ OPTIONS:
     -l, --count-hard-links    Count hard-linked files each time they are seen
     -t, --threads <N>         Worker threads (default: logical CPU count)
     -f, --format <FMT>        Byte format: metric (default) or bytes
+        --no-progress         Disable the live progress line on stderr
     -h, --help                Print this help
 """
 
@@ -22,6 +26,7 @@ var apparent = false
 var countHardLinks = false
 var format = "metric"
 var threads = ProcessInfo.processInfo.activeProcessorCount
+var noProgress = false
 var inputs: [String] = []
 
 let args = Array(CommandLine.arguments.dropFirst())
@@ -30,6 +35,7 @@ while i < args.count {
     switch args[i] {
     case "-A", "--apparent-size": apparent = true
     case "-l", "--count-hard-links": countHardLinks = true
+    case "--no-progress": noProgress = true
     case "-f", "--format":
         i += 1
         if i < args.count { format = args[i] }
@@ -73,8 +79,15 @@ func leftPad(_ s: String, to width: Int) -> String {
 
 // MARK: - Run
 
-let scanner = DiskScanner(apparent: apparent, countHardLinks: countHardLinks, threadCount: threads)
+// Show live progress only when stderr is an interactive terminal.
+let showProgress = !noProgress && isatty(STDERR_FILENO) != 0
+let counter = showProgress ? ProgressCounter() : nil
+let monitor = counter.map { ProgressMonitor(counter: $0) }
 
+let scanner = DiskScanner(apparent: apparent, countHardLinks: countHardLinks,
+                          threadCount: threads, progress: counter)
+
+monitor?.begin()
 var results: [(path: String, size: Int64)] = []
 var grandTotal: Int64 = 0
 for input in inputs {
@@ -82,6 +95,7 @@ for input in inputs {
     results.append((input, r.size))
     grandTotal += r.size
 }
+monitor?.finish()
 
 results.sort { $0.size < $1.size }   // ascending, like dua
 
