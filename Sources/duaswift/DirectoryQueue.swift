@@ -5,6 +5,7 @@ import Foundation
 /// `pending` counts directories enqueued-but-not-yet-finished so idle workers
 /// know when the whole scan is done. `@unchecked Sendable` is safe because the
 /// `NSCondition` serializes every access to `stack` and `pending`.
+/// Pops are LIFO, so directories are traversed depth-first.
 final class DirectoryQueue: @unchecked Sendable {
     private let cond = NSCondition()
     private var stack: [String]
@@ -44,7 +45,7 @@ final class DirectoryQueue: @unchecked Sendable {
     func finishOne() {
         cond.lock()
         pending -= 1
-        cond.broadcast()
+        if pending == 0 { cond.broadcast() }   // only the done-signal needs all peers; work-available wakeups come from push()
         cond.unlock()
     }
 }
