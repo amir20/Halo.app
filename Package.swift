@@ -7,7 +7,6 @@ let package = Package(
         .macOS(.v26)
     ],
     products: [
-        .executable(name: "ProgressApp", targets: ["ProgressApp"]),
         .executable(name: "duaswift", targets: ["duaswift"]),
         .executable(name: "Halo", targets: ["Halo"]),
         .library(name: "DiskKit", targets: ["DiskKit"])
@@ -16,10 +15,6 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.8.2")
     ],
     targets: [
-        .executableTarget(
-            name: "ProgressApp",
-            path: "Sources/ProgressApp"
-        ),
         // Disk-scanning model shared by the GUI (and reusable by the CLI):
         // a classified directory tree built from a real filesystem walk.
         .target(
@@ -63,7 +58,7 @@ let package = Package(
                 ),
                 permissions: [
                     .writeToPackageDirectory(
-                        reason: "Write the generated ProgressApp.app bundle into the project directory"
+                        reason: "Write the generated .app bundle into the project directory"
                     )
                 ]
             )

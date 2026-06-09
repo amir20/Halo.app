@@ -104,28 +104,29 @@ real temporary directory trees).
 
 ## Halo (GUI app)
 
-**Halo** is the SwiftUI disk visualizer. Run it from source, or package it into
-a double-clickable, ad-hoc-signed `.app`:
+**Halo** is the SwiftUI disk visualizer. Run it from source, package it into a
+double-clickable, ad-hoc-signed `.app`, or build a drag-to-install `.dmg`:
 
 ```sh
-swift run Halo                  # build + launch from source
-swift package bundle-app Halo   # build a release Halo.app in the repo root
+swift run Halo                                                   # launch from source
+swift package --allow-writing-to-package-directory bundle-app Halo   # -> Halo.app
+./Scripts/make-dmg.sh                                            # -> Halo.dmg
 open Halo.app
 ```
 
 The bundle picks up the app icon from `Icons/AppIcon.icns`; regenerate it with
 `./Icons/make-icon.sh` (renders the donut from the same oklch palette the app
-uses).
+uses). CI builds and uploads `Halo.dmg` as an artifact on every push and PR.
 
 ## Repository layout
 
-This package also contains an unrelated `ProgressApp` SwiftUI demo target; the
-disk-usage tool lives entirely under `Sources/duaswift`.
+The package builds three products on a shared `DiskKit` core: the `duaswift`
+CLI, the `Halo` SwiftUI app, and the `DiskKit` library itself.
 
 | Path | Purpose |
 | --- | --- |
-| `Sources/duaswift/Duaswift.swift` | CLI entry point (`ParsableCommand`). |
-| `Sources/duaswift/Scanner.swift` | Parallel POSIX directory scanner. |
-| `Sources/duaswift/DirectoryQueue.swift` | Blocking work-stack for the scan. |
-| `Sources/duaswift/Progress.swift` | Live progress counter + status-line renderer. |
-| `Sources/duaswift/Formatting.swift` | Byte/number formatting helpers. |
+| `Sources/duaswift/` | CLI entry point + parallel POSIX scanner (`dua aggregate`-style). |
+| `Sources/DiskKit/` | Shared scan model: classified directory tree, derivations, formatting. |
+| `Sources/Halo/` | SwiftUI donut visualizer built on `DiskKit`. |
+| `Plugins/BundleApp/` | `swift package bundle-app` — wraps a release binary into a `.app`. |
+| `Icons/` · `Scripts/` | Icon generator and `.dmg` packaging. |

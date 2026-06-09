@@ -10,8 +10,7 @@ struct BundleApp: CommandPlugin {
     func performCommand(context: PluginContext, arguments: [String]) async throws {
         // Product to bundle: first non-flag argument, defaulting to Halo.
         let appName = arguments.first { !$0.hasPrefix("-") } ?? "Halo"
-        let displayNames = ["ProgressApp": "Progress Demo", "Halo": "Halo"]
-        let displayName = displayNames[appName] ?? appName
+        let displayName = appName
         let bundleID = "com.example.\(appName.lowercased())"
 
         // 1. Build the executable in release mode.
@@ -43,53 +42,32 @@ struct BundleApp: CommandPlugin {
 
         // 2b. App icon: copy Icons/AppIcon.icns into Resources (if present).
         let iconSrc = root.appending("Icons").appending("AppIcon.icns")
-        var iconKeys = ""
-        if fm.fileExists(atPath: iconSrc.string) {
+        let hasIcon = fm.fileExists(atPath: iconSrc.string)
+        if hasIcon {
             try fm.copyItem(atPath: iconSrc.string,
                             toPath: resourcesDir.appending("AppIcon.icns").string)
-            iconKeys = """
-                <key>CFBundleIconFile</key>
-                <string>AppIcon</string>
-                <key>CFBundleIconName</key>
-                <string>AppIcon</string>
-
-            """
         }
 
-        // 3. Write Info.plist.
-        let infoPlist = """
-        <?xml version="1.0" encoding="UTF-8"?>
-        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-        <plist version="1.0">
-        <dict>
-            <key>CFBundleName</key>
-            <string>\(appName)</string>
-            <key>CFBundleDisplayName</key>
-            <string>\(displayName)</string>
-            <key>CFBundleIdentifier</key>
-            <string>\(bundleID)</string>
-            <key>CFBundleVersion</key>
-            <string>1.0</string>
-            <key>CFBundleShortVersionString</key>
-            <string>1.0</string>
-            <key>CFBundlePackageType</key>
-            <string>APPL</string>
-            <key>CFBundleExecutable</key>
-            <string>\(appName)</string>
-            <key>LSMinimumSystemVersion</key>
-            <string>14.0</string>
-            <key>NSHighResolutionCapable</key>
-            <true/>
-        \(iconKeys)    <key>NSPrincipalClass</key>
-            <string>NSApplication</string>
-        </dict>
-        </plist>
-        """
-        try infoPlist.write(
-            toFile: bundle.appending("Contents").appending("Info.plist").string,
-            atomically: true,
-            encoding: .utf8
-        )
+        // 3. Write Info.plist as a compiled *binary* property list — the format
+        // Xcode actually ships — built from typed data instead of an XML string.
+        var info: [String: Any] = [
+            "CFBundleName": appName,
+            "CFBundleDisplayName": displayName,
+            "CFBundleIdentifier": bundleID,
+            "CFBundleVersion": "1.0",
+            "CFBundleShortVersionString": "1.0",
+            "CFBundlePackageType": "APPL",
+            "CFBundleExecutable": appName,
+            "LSMinimumSystemVersion": "14.0",
+            "NSHighResolutionCapable": true,
+            "NSPrincipalClass": "NSApplication",
+        ]
+        if hasIcon {
+            info["CFBundleIconFile"] = "AppIcon"
+            info["CFBundleIconName"] = "AppIcon"
+        }
+        let infoData = try PropertyListSerialization.data(fromPropertyList: info, format: .binary, options: 0)
+        try infoData.write(to: URL(fileURLWithPath: bundle.appending("Contents").appending("Info.plist").string))
 
         // 4. Ad-hoc code signature so Gatekeeper allows local launch.
         let codesign = Process()

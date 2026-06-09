@@ -2,9 +2,9 @@
 .build/
 .swiftpm/
 
-# Build artifacts produced by the bundle-app plugin
-ProgressApp.app/
+# Build artifacts (bundle-app plugin / make-dmg.sh)
 Halo.app/
+Halo.dmg
 
 # Icon preview (regenerate with Icons/make-icon.sh)
 Icons/preview.png
