@@ -7,16 +7,12 @@ let package = Package(
         .macOS(.v26)
     ],
     products: [
-        .executable(name: "duaswift", targets: ["duaswift"]),
         .executable(name: "Halo", targets: ["Halo"]),
         .library(name: "DiskKit", targets: ["DiskKit"])
     ],
-    dependencies: [
-        .package(url: "https://github.com/apple/swift-argument-parser", from: "1.8.2")
-    ],
     targets: [
-        // Disk-scanning model shared by the GUI (and reusable by the CLI):
-        // a classified directory tree built from a real filesystem walk.
+        // Disk-scanning model behind the Halo GUI: a classified directory tree
+        // built from a real, parallel filesystem walk.
         .target(
             name: "DiskKit",
             path: "Sources/DiskKit"
@@ -36,18 +32,6 @@ let package = Package(
             name: "HaloTests",
             dependencies: ["Halo", "DiskKit"],
             path: "Tests/HaloTests"
-        ),
-        .executableTarget(
-            name: "duaswift",
-            dependencies: [
-                .product(name: "ArgumentParser", package: "swift-argument-parser")
-            ],
-            path: "Sources/duaswift"
-        ),
-        .testTarget(
-            name: "duaswiftTests",
-            dependencies: ["duaswift"],
-            path: "Tests/duaswiftTests"
         ),
         .plugin(
             name: "BundleApp",
