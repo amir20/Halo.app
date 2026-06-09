@@ -8,6 +8,10 @@ of worker threads, sums up disk usage, and prints a sorted summary — mirroring
 `dua aggregate`'s default semantics (allocated blocks, hard-link de-duplication,
 symlinks not followed).
 
+> **Also in this repo:** **Disk · Dial** (`swift run DiskDial`) — a native
+> SwiftUI donut disk visualizer built on the same scanner (the `DiskKit`
+> library). See [docs/disk-dial.md](docs/disk-dial.md) for its architecture.
+
 ```console
 $ duaswift Sources Tests Package.swift
   10.49 KB Package.swift

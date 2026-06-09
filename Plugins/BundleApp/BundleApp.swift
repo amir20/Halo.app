@@ -8,8 +8,10 @@ import Foundation
 @main
 struct BundleApp: CommandPlugin {
     func performCommand(context: PluginContext, arguments: [String]) async throws {
-        let appName = "ProgressApp"
-        let displayName = "Progress Demo"
+        // Product to bundle: first non-flag argument, defaulting to ProgressApp.
+        let appName = arguments.first { !$0.hasPrefix("-") } ?? "ProgressApp"
+        let displayNames = ["ProgressApp": "Progress Demo", "DiskDial": "Disk · Dial"]
+        let displayName = displayNames[appName] ?? appName
         let bundleID = "com.example.\(appName)"
 
         // 1. Build the executable in release mode.
