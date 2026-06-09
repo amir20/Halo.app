@@ -23,29 +23,29 @@ struct BundleApp: CommandPlugin {
             Diagnostics.error("Build failed:\n\(build.logText)")
             return
         }
-        guard let binary = build.builtArtifacts.first(where: { $0.kind == .executable })?.path else {
+        guard let binary = build.builtArtifacts.first(where: { $0.kind == .executable })?.url else {
             Diagnostics.error("Could not locate the built executable.")
             return
         }
 
         // 2. Assemble the .app bundle layout in the package root.
         let fm = FileManager.default
-        let root = context.package.directory
-        let bundle = root.appending("\(appName).app")
-        let macOSDir = bundle.appending("Contents").appending("MacOS")
-        let resourcesDir = bundle.appending("Contents").appending("Resources")
+        let root = context.package.directoryURL
+        let bundle = root.appending(component: "\(appName).app")
+        let macOSDir = bundle.appending(component: "Contents").appending(component: "MacOS")
+        let resourcesDir = bundle.appending(component: "Contents").appending(component: "Resources")
 
-        try? fm.removeItem(atPath: bundle.string)
-        try fm.createDirectory(atPath: macOSDir.string, withIntermediateDirectories: true)
-        try fm.createDirectory(atPath: resourcesDir.string, withIntermediateDirectories: true)
-        try fm.copyItem(atPath: binary.string, toPath: macOSDir.appending(appName).string)
+        try? fm.removeItem(at: bundle)
+        try fm.createDirectory(at: macOSDir, withIntermediateDirectories: true)
+        try fm.createDirectory(at: resourcesDir, withIntermediateDirectories: true)
+        try fm.copyItem(at: binary, to: macOSDir.appending(component: appName))
 
         // 2b. App icon: copy Icons/AppIcon.icns into Resources (if present).
-        let iconSrc = root.appending("Icons").appending("AppIcon.icns")
-        let hasIcon = fm.fileExists(atPath: iconSrc.string)
+        let iconSrc = root.appending(component: "Icons").appending(component: "AppIcon.icns")
+        let hasIcon = fm.fileExists(atPath: iconSrc.path(percentEncoded: false))
         if hasIcon {
-            try fm.copyItem(atPath: iconSrc.string,
-                            toPath: resourcesDir.appending("AppIcon.icns").string)
+            try fm.copyItem(at: iconSrc,
+                            to: resourcesDir.appending(component: "AppIcon.icns"))
         }
 
         // 3. Write Info.plist as a compiled *binary* property list — the format
@@ -67,16 +67,16 @@ struct BundleApp: CommandPlugin {
             info["CFBundleIconName"] = "AppIcon"
         }
         let infoData = try PropertyListSerialization.data(fromPropertyList: info, format: .binary, options: 0)
-        try infoData.write(to: URL(fileURLWithPath: bundle.appending("Contents").appending("Info.plist").string))
+        try infoData.write(to: bundle.appending(component: "Contents").appending(component: "Info.plist"))
 
         // 4. Ad-hoc code signature so Gatekeeper allows local launch.
         let codesign = Process()
         codesign.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
-        codesign.arguments = ["--force", "--deep", "--sign", "-", bundle.string]
+        codesign.arguments = ["--force", "--deep", "--sign", "-", bundle.path(percentEncoded: false)]
         try? codesign.run()
         codesign.waitUntilExit()
 
-        Diagnostics.remark("Created \(bundle.string)")
+        Diagnostics.remark("Created \(bundle.path(percentEncoded: false))")
         print("✅ Built \(appName).app — open it with:  open \(appName).app")
     }
 }
