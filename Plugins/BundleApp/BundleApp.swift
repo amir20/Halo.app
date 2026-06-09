@@ -8,11 +8,11 @@ import Foundation
 @main
 struct BundleApp: CommandPlugin {
     func performCommand(context: PluginContext, arguments: [String]) async throws {
-        // Product to bundle: first non-flag argument, defaulting to ProgressApp.
-        let appName = arguments.first { !$0.hasPrefix("-") } ?? "ProgressApp"
-        let displayNames = ["ProgressApp": "Progress Demo", "DiskDial": "Disk · Dial"]
+        // Product to bundle: first non-flag argument, defaulting to Halo.
+        let appName = arguments.first { !$0.hasPrefix("-") } ?? "Halo"
+        let displayNames = ["ProgressApp": "Progress Demo", "Halo": "Halo"]
         let displayName = displayNames[appName] ?? appName
-        let bundleID = "com.example.\(appName)"
+        let bundleID = "com.example.\(appName.lowercased())"
 
         // 1. Build the executable in release mode.
         Diagnostics.remark("Building \(appName) (release)…")
@@ -41,6 +41,21 @@ struct BundleApp: CommandPlugin {
         try fm.createDirectory(atPath: resourcesDir.string, withIntermediateDirectories: true)
         try fm.copyItem(atPath: binary.string, toPath: macOSDir.appending(appName).string)
 
+        // 2b. App icon: copy Icons/AppIcon.icns into Resources (if present).
+        let iconSrc = root.appending("Icons").appending("AppIcon.icns")
+        var iconKeys = ""
+        if fm.fileExists(atPath: iconSrc.string) {
+            try fm.copyItem(atPath: iconSrc.string,
+                            toPath: resourcesDir.appending("AppIcon.icns").string)
+            iconKeys = """
+                <key>CFBundleIconFile</key>
+                <string>AppIcon</string>
+                <key>CFBundleIconName</key>
+                <string>AppIcon</string>
+
+            """
+        }
+
         // 3. Write Info.plist.
         let infoPlist = """
         <?xml version="1.0" encoding="UTF-8"?>
@@ -65,7 +80,7 @@ struct BundleApp: CommandPlugin {
             <string>14.0</string>
             <key>NSHighResolutionCapable</key>
             <true/>
-            <key>NSPrincipalClass</key>
+        \(iconKeys)    <key>NSPrincipalClass</key>
             <string>NSApplication</string>
         </dict>
         </plist>

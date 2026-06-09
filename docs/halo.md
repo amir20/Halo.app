@@ -1,4 +1,4 @@
-# Disk · Dial — architecture
+# Halo — architecture
 
 A native SwiftUI re-implementation of the `Dial.html` design: a clean light
 donut disk visualizer built on the project's POSIX scanner. It scans a real
@@ -9,9 +9,9 @@ directory tree, classifies it, and renders an interactive donut with two lenses
 
 ```mermaid
 flowchart TD
-    subgraph App["DiskDial · SwiftUI app"]
+    subgraph App["Halo · SwiftUI app"]
         direction TB
-        APP["DiskDialApp\n@main · scans ~ on launch"]
+        APP["HaloApp\n@main · scans ~ on launch"]
         CV["ContentView"]
         HV["HeaderView\nbreadcrumbs · By folder / By type"]
         DV["DonutView\nring · amber arcs · live hole"]
@@ -66,7 +66,7 @@ subtrees finish, with a live counter throughout.
 ```mermaid
 sequenceDiagram
     participant U as User
-    participant App as DiskDialApp
+    participant App as HaloApp
     participant M as ScanModel (MainActor)
     participant T as TreeScanner (bg thread)
     participant P as ScanProgress (Mutex)

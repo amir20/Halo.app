@@ -2,14 +2,14 @@
 import PackageDescription
 
 let package = Package(
-    name: "ProgressApp",
+    name: "Halo",
     platforms: [
         .macOS(.v26)
     ],
     products: [
         .executable(name: "ProgressApp", targets: ["ProgressApp"]),
         .executable(name: "duaswift", targets: ["duaswift"]),
-        .executable(name: "DiskDial", targets: ["DiskDial"]),
+        .executable(name: "Halo", targets: ["Halo"]),
         .library(name: "DiskKit", targets: ["DiskKit"])
     ],
     dependencies: [
@@ -26,16 +26,21 @@ let package = Package(
             name: "DiskKit",
             path: "Sources/DiskKit"
         ),
-        // "Disk · Dial" — a SwiftUI donut disk visualizer built on DiskKit.
+        // "Halo" — a SwiftUI donut disk visualizer built on DiskKit.
         .executableTarget(
-            name: "DiskDial",
+            name: "Halo",
             dependencies: ["DiskKit"],
-            path: "Sources/DiskDial"
+            path: "Sources/Halo"
         ),
         .testTarget(
             name: "DiskKitTests",
             dependencies: ["DiskKit"],
             path: "Tests/DiskKitTests"
+        ),
+        .testTarget(
+            name: "HaloTests",
+            dependencies: ["Halo", "DiskKit"],
+            path: "Tests/HaloTests"
         ),
         .executableTarget(
             name: "duaswift",

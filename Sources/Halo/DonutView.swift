@@ -26,6 +26,27 @@ struct DonutView: View {
             hole
         }
         .frame(width: side, height: side)
+        // Resolve hover by geometry. Per-slice `.onHover` registers a tracking
+        // area over each slice's *full* 460×460 frame (not its wedge), so the
+        // topmost slice — the smallest, drawn last — would swallow every hover.
+        // Mapping the cursor's angle to the arc under it picks the right slice.
+        .contentShape(Rectangle())
+        .onContinuousHover(coordinateSpace: .local) { phase in
+            switch phase {
+            case .active(let p):
+                let id = arcID(at: p)
+                if model.hover != id { model.hover = id }
+            case .ended:
+                model.hover = nil
+            }
+        }
+        .onTapGesture {
+            // On macOS the cursor sits over the slice when clicked, so the live
+            // hover identifies the tapped slice.
+            if let h = model.hover, let seg = model.segments.first(where: { $0.id == h }) {
+                model.tapSegment(seg)
+            }
+        }
         .animation(.easeOut(duration: 0.18), value: model.hover)
         .animation(.easeOut(duration: 0.18), value: model.expanded)
         .onChange(of: model.sweepKey) { _, _ in restartSweep() }
@@ -39,6 +60,11 @@ struct DonutView: View {
         }
     }
 
+    /// The id of the arc beneath a point in the donut's local (460×460) space.
+    private func arcID(at p: CGPoint) -> String? {
+        hitTestArc(at: p, in: model.arcs, center: side / 2, r0: r0, r1: r1)
+    }
+
     @ViewBuilder
     private func slice(_ arc: Arc) -> some View {
         let a0 = arc.a0 + arc.gap / 2
@@ -50,8 +76,6 @@ struct DonutView: View {
         let end = swept ? a1Full : a0
         let recFrac = arc.seg.size > 0
             ? min(max(Double(arc.seg.recl) / Double(arc.seg.size), 0), 1) : 0
-        let base = ArcShape(innerRadius: r0, outerRadius: r1,
-                            startAngle: a0, endAngle: a1Full)   // full wedge for hit-testing
 
         ZStack {
             ArcShape(innerRadius: r0, outerRadius: outer, startAngle: a0, endAngle: end)
@@ -66,12 +90,7 @@ struct DonutView: View {
             }
         }
         .opacity(dimmed ? 0.32 : 1)
-        .contentShape(base)
-        .onHover { inside in
-            if inside { model.hover = arc.seg.id }
-            else if model.hover == arc.seg.id { model.hover = nil }
-        }
-        .onTapGesture { model.tapSegment(arc.seg) }
+        .allowsHitTesting(false)   // hover & tap are resolved by angle at the donut level
     }
 
     private var hole: some View {
@@ -89,6 +108,10 @@ struct DonutView: View {
         }()
 
         return ZStack {
+            // Solid light center: the hole carries dark text, so it needs a
+            // light, opaque backing (glass here rendered as a dark blob and
+            // killed contrast). The glass treatment lives on the floating
+            // controls instead.
             Circle().fill(Palette.bg).frame(width: (r0 - 6) * 2, height: (r0 - 6) * 2)
             VStack(spacing: 3) {
                 Text(name.count > 18 ? name.prefix(17) + "…" : name)
@@ -120,4 +143,17 @@ extension Double {
     var clean: String {
         self == rounded() ? String(Int(self)) : String(self)
     }
+}
+
+/// The id of the arc beneath `p` in a donut centered at `(center, center)` with
+/// ring radii `r0`/`r1`, or `nil` outside the ring band. Angles follow `Arc`:
+/// 12 o'clock = -π/2, increasing clockwise. Kept pure so the hover hit-test is
+/// unit-testable without a live view.
+func hitTestArc(at p: CGPoint, in arcs: [Arc], center: CGFloat, r0: CGFloat, r1: CGFloat) -> String? {
+    let dx = p.x - center, dy = p.y - center
+    let r = sqrt(dx * dx + dy * dy)
+    guard r >= r0, r <= r1 + 9 else { return nil }
+    var theta = atan2(dy, dx)
+    if theta < -Double.pi / 2 { theta += 2 * .pi }   // wrap into [-π/2, 3π/2)
+    return arcs.first { theta >= $0.a0 && theta < $0.a1 }?.seg.id
 }

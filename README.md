@@ -8,9 +8,10 @@ of worker threads, sums up disk usage, and prints a sorted summary — mirroring
 `dua aggregate`'s default semantics (allocated blocks, hard-link de-duplication,
 symlinks not followed).
 
-> **Also in this repo:** **Disk · Dial** (`swift run DiskDial`) — a native
-> SwiftUI donut disk visualizer built on the same scanner (the `DiskKit`
-> library). See [docs/disk-dial.md](docs/disk-dial.md) for its architecture.
+> **Also in this repo:** **Halo** (`swift run Halo`) — a native SwiftUI donut
+> disk visualizer built on the same scanner (the `DiskKit` library). See
+> [docs/halo.md](docs/halo.md) for its architecture, or build a double-clickable
+> app with `swift package bundle-app Halo` (see below).
 
 ```console
 $ duaswift Sources Tests Package.swift
@@ -100,6 +101,21 @@ swift test       # run the test suite
 The test suite covers the formatting helpers and includes characterization
 tests for the scanner (apparent-size deltas and hard-link de-duplication against
 real temporary directory trees).
+
+## Halo (GUI app)
+
+**Halo** is the SwiftUI disk visualizer. Run it from source, or package it into
+a double-clickable, ad-hoc-signed `.app`:
+
+```sh
+swift run Halo                  # build + launch from source
+swift package bundle-app Halo   # build a release Halo.app in the repo root
+open Halo.app
+```
+
+The bundle picks up the app icon from `Icons/AppIcon.icns`; regenerate it with
+`./Icons/make-icon.sh` (renders the donut from the same oklch palette the app
+uses).
 
 ## Repository layout
 
