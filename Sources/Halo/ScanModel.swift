@@ -77,6 +77,9 @@ final class ScanModel {
     /// Scope (folder names below root) to re-enter once the post-reclaim rescan
     /// finishes, so the user isn't bounced back to the root.
     private var pendingScopeNames: [String]?
+    /// Reclaim outcome to surface once the post-reclaim rescan finishes (the
+    /// rescan clears `lastReclaim`, so it's re-applied at the end).
+    private var pendingReclaim: ReclaimOutcome?
 
     var current: DirNode? { path.last }
 
@@ -106,6 +109,9 @@ final class ScanModel {
         scanError = nil
         liveFiles = 0; liveBytes = 0
         showRing = false
+        // Don't carry a prior reclaim's footer note into an unrelated scan; a
+        // post-reclaim rescan re-applies it from `pendingReclaim` in finishScan.
+        lastReclaim = nil
         let prog = ScanProgress()
         progress = prog
         ringDelayTimer?.invalidate()
@@ -168,6 +174,11 @@ final class ScanModel {
         if let names = pendingScopeNames, let r = root {
             pendingScopeNames = nil
             path = Self.resolvePath(from: r, names: names)
+        }
+        // Surface the reclaim result that triggered this rescan.
+        if let outcome = pendingReclaim {
+            pendingReclaim = nil
+            lastReclaim = outcome
         }
         scanning = false
         // Fade the activity ring out as the real wedges take over.
@@ -349,8 +360,8 @@ final class ScanModel {
         Task.detached(priority: .userInitiated) {
             let result = Reclaimer.moveToTrash(urls)
             await MainActor.run {
-                self.lastReclaim = ReclaimOutcome(trashed: result.trashed.count,
-                                                  failed: result.failed.count)
+                self.pendingReclaim = ReclaimOutcome(trashed: result.trashed.count,
+                                                     failed: result.failed.count)
                 self.pendingScopeNames = scopeNames
                 self.scan(path: self.scanRootPath)
             }
