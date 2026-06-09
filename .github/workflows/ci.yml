@@ -3,8 +3,7 @@ name: CI
 on:
   push:
     branches: [main]
-  pull_request:
-    branches: [main]
+  pull_request:        # run on PRs against any base branch (incl. stacked PRs)
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -34,3 +33,27 @@ jobs:
 
       - name: Test
         run: swift test --skip-build
+
+  package:
+    name: Package Halo.dmg
+    needs: build-test
+    runs-on: macos-26
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select latest stable Xcode
+        run: |
+          XC="$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1)"
+          if [ -n "$XC" ]; then sudo xcode-select -s "$XC"; fi
+          swift --version
+
+      - name: Build Halo.app and Halo.dmg
+        run: make dmg
+
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Halo-dmg
+          path: Halo.dmg
+          if-no-files-found: error

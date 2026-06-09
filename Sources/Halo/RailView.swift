@@ -92,7 +92,9 @@ struct RailView: View {
     }
 
     private func locations(for seg: Segment) -> some View {
-        let locs = Array((model.current.map { Derive.typeLocations($0, seg.category) } ?? []).prefix(6))
+        // Cached on the model (rebuilt only when the expanded type changes),
+        // so hovering rail rows no longer re-walks the subtree each frame.
+        let locs = Array(model.expandedLocations.prefix(6))
         return VStack(spacing: 7) {
             ForEach(locs.indices, id: \.self) { i in
                 let loc = locs[i]
@@ -132,7 +134,7 @@ struct RailView: View {
             .font(.system(size: 13.5, weight: .semibold))
             .foregroundStyle(.white)
             .frame(maxWidth: .infinity).frame(height: 40)
-            .background(RoundedRectangle(cornerRadius: 10).fill(Palette.ink))
+            .glassEffect(.regular.tint(Palette.ink), in: .rect(cornerRadius: 10))
             .opacity(0.4)
 
             let n = model.reclaimTargets.count

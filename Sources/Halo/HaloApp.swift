@@ -3,12 +3,12 @@ import AppKit
 import DiskKit
 
 @main
-struct DiskDialApp: App {
+struct HaloApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var model = ScanModel()
 
     var body: some Scene {
-        WindowGroup("Disk · Dial") {
+        WindowGroup("Halo") {
             ContentView(model: model)
                 .onAppear {
                     if model.root == nil {

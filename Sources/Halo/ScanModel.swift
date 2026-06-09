@@ -87,6 +87,7 @@ final class ScanModel {
         liveChildren = node.children
         root = node
         path = [node]
+        refresh()
         sweepKey += 1
     }
 
@@ -98,6 +99,7 @@ final class ScanModel {
         withAnimation(.easeOut(duration: 0.5)) {
             root = rebuilt
             path = [rebuilt]
+            refresh()
         }
     }
 
@@ -108,6 +110,7 @@ final class ScanModel {
             path = [rebuilt]
         }
         scanning = false
+        refresh()
         sweepKey += 1
     }
 
@@ -121,18 +124,61 @@ final class ScanModel {
         root = tree
         path = [tree]
         scanning = false
+        refresh()
         sweepKey += 1
     }
 
     // MARK: - Derived
 
     var total: Int64 { max(current?.size ?? 0, 1) }
-    var reclTotal: Int64 { current.map(Derive.reclaimBytes) ?? 0 }
 
-    var segments: [Segment] {
+    /// Scope-dependent derivations. Each is an O(subtree) computation, so they
+    /// are cached here and rebuilt only when the *scope* changes (`root` /
+    /// `path` / `mode`) via `refresh()` — never on `hover` or per animation
+    /// frame. Highlighting a slice then costs a stored-array read instead of
+    /// several full-tree walks, which is what kept hover smooth on big scans.
+    private(set) var segments: [Segment] = []
+    private(set) var arcs: [Arc] = []
+    private(set) var reclTotal: Int64 = 0
+    private(set) var reclaimTargets: [DirNode] = []
+    /// Where the currently expanded type lives (type lens, drill-down rows).
+    private(set) var expandedLocations: [(node: DirNode, size: Int64, recl: Int64)] = []
+
+    /// The slice currently focused (hovered, or expanded type). Cheap — a lookup
+    /// over the cached `segments` — so it may depend on `hover` freely.
+    var focus: Segment? {
+        if let h = hover { return segments.first { $0.id == h } }
+        if mode == .type, let e = expanded { return segments.first { $0.category == e } }
+        return nil
+    }
+
+    /// Rebuilds every scope-dependent derivation. Call on any change to `root`,
+    /// `path`, or `mode` — i.e. wherever `sweepKey` is bumped.
+    private func refresh() {
+        segments = computeSegments()
+        arcs = computeArcs(segments)
+        reclTotal = current.map(Derive.reclaimBytes) ?? 0
+        reclaimTargets = current.map(Derive.reclaimRoots) ?? []
+        refreshExpandedLocations()
+    }
+
+    /// Recomputes only the expanded-type drill-down rows. Cheaper than a full
+    /// `refresh()`, for when just `expanded` toggles (no scope change).
+    private func refreshExpandedLocations() {
+        guard mode == .type, let e = expanded, let cur = current else {
+            expandedLocations = []; return
+        }
+        expandedLocations = Derive.typeLocations(cur, e)
+    }
+
+    private func computeSegments() -> [Segment] {
         guard let cur = current else { return [] }
         if mode == .folder {
-            var segs = cur.children.map { c in
+            // Skip zero-byte children: during a streaming scan these are
+            // not-yet-sized placeholders (and otherwise just empty dirs). They
+            // contribute no arc, but the slice geometry still floors them to a
+            // hoverable sliver — which is what surfaced "0 KB" on hover.
+            var segs = cur.children.filter { $0.size > 0 }.map { c in
                 Segment(id: Self.nid(c), label: c.name, category: c.category,
                         size: c.size, recl: Derive.reclaimBytes(c),
                         node: c, isType: false, drillable: !c.children.isEmpty)
@@ -155,26 +201,17 @@ final class ScanModel {
         }
     }
 
-    var arcs: [Arc] {
+    private func computeArcs(_ segs: [Segment]) -> [Arc] {
         let gap = 0.020
         var a = -Double.pi / 2
         let t = Double(total)
-        return segments.map { s in
+        return segs.map { s in
             let ang = Double(s.size) / t * .pi * 2
             let arc = Arc(seg: s, a0: a, a1: a + ang, gap: gap)
             a += ang
             return arc
         }
     }
-
-    /// The slice currently focused (hovered, or expanded type).
-    var focus: Segment? {
-        if let h = hover { return segments.first { $0.id == h } }
-        if mode == .type, let e = expanded { return segments.first { $0.category == e } }
-        return nil
-    }
-
-    var reclaimTargets: [DirNode] { current.map(Derive.reclaimRoots) ?? [] }
 
     var crumbs: [String] {
         ["Macintosh HD"] + path.map { displayName($0.name) }
@@ -200,10 +237,12 @@ final class ScanModel {
             if let node = s.node, !node.children.isEmpty {
                 hover = nil; expanded = nil
                 path.append(node)
+                refresh()
                 sweepKey += 1
             }
         } else {
             expanded = (expanded == s.category) ? nil : s.category
+            refreshExpandedLocations()
         }
     }
 
@@ -211,6 +250,7 @@ final class ScanModel {
         mode = .folder; hover = nil; expanded = nil
         let target = node.children.isEmpty ? (node.parent ?? node) : node
         path = Derive.pathTo(target)
+        refresh()
         sweepKey += 1
     }
 
@@ -219,6 +259,7 @@ final class ScanModel {
         guard index >= 1, index - 1 < path.count else { return }
         hover = nil; expanded = nil
         path = Array(path.prefix(index))
+        refresh()
         sweepKey += 1
     }
 
@@ -226,12 +267,14 @@ final class ScanModel {
         guard path.count > 1 else { return }
         hover = nil; expanded = nil
         path.removeLast()
+        refresh()
         sweepKey += 1
     }
 
     func setMode(_ m: Lens) {
         guard m != mode else { return }
         mode = m; hover = nil; expanded = nil
+        refresh()
         sweepKey += 1
     }
 

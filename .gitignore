@@ -2,13 +2,20 @@
 .build/
 .swiftpm/
 
-# Build artifacts produced by make-app.sh
-ProgressApp.app/
+# Build artifacts (bundle-app plugin / make-dmg.sh)
+Halo.app/
+Halo.dmg
+
+# Icon preview (regenerate with Icons/make-icon.sh)
+Icons/preview.png
 
 # Xcode
 *.xcodeproj/
 xcuserdata/
 DerivedData/
+
+# Editors
+.vscode/
 
 # macOS
 .DS_Store
