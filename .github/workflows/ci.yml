@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, disk-dial-app]
+    branches: [main]
   pull_request:        # run on PRs against any base branch (incl. stacked PRs)
 
 concurrency:
