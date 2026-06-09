@@ -8,11 +8,10 @@ import Foundation
 @main
 struct BundleApp: CommandPlugin {
     func performCommand(context: PluginContext, arguments: [String]) async throws {
-        // Product to bundle: first non-flag argument, defaulting to ProgressApp.
-        let appName = arguments.first { !$0.hasPrefix("-") } ?? "ProgressApp"
-        let displayNames = ["ProgressApp": "Progress Demo", "DiskDial": "Disk · Dial"]
-        let displayName = displayNames[appName] ?? appName
-        let bundleID = "com.example.\(appName)"
+        // Product to bundle: first non-flag argument, defaulting to Halo.
+        let appName = arguments.first { !$0.hasPrefix("-") } ?? "Halo"
+        let displayName = appName
+        let bundleID = "com.example.\(appName.lowercased())"
 
         // 1. Build the executable in release mode.
         Diagnostics.remark("Building \(appName) (release)…")
@@ -24,66 +23,60 @@ struct BundleApp: CommandPlugin {
             Diagnostics.error("Build failed:\n\(build.logText)")
             return
         }
-        guard let binary = build.builtArtifacts.first(where: { $0.kind == .executable })?.path else {
+        guard let binary = build.builtArtifacts.first(where: { $0.kind == .executable })?.url else {
             Diagnostics.error("Could not locate the built executable.")
             return
         }
 
         // 2. Assemble the .app bundle layout in the package root.
         let fm = FileManager.default
-        let root = context.package.directory
-        let bundle = root.appending("\(appName).app")
-        let macOSDir = bundle.appending("Contents").appending("MacOS")
-        let resourcesDir = bundle.appending("Contents").appending("Resources")
+        let root = context.package.directoryURL
+        let bundle = root.appending(component: "\(appName).app")
+        let macOSDir = bundle.appending(component: "Contents").appending(component: "MacOS")
+        let resourcesDir = bundle.appending(component: "Contents").appending(component: "Resources")
 
-        try? fm.removeItem(atPath: bundle.string)
-        try fm.createDirectory(atPath: macOSDir.string, withIntermediateDirectories: true)
-        try fm.createDirectory(atPath: resourcesDir.string, withIntermediateDirectories: true)
-        try fm.copyItem(atPath: binary.string, toPath: macOSDir.appending(appName).string)
+        try? fm.removeItem(at: bundle)
+        try fm.createDirectory(at: macOSDir, withIntermediateDirectories: true)
+        try fm.createDirectory(at: resourcesDir, withIntermediateDirectories: true)
+        try fm.copyItem(at: binary, to: macOSDir.appending(component: appName))
 
-        // 3. Write Info.plist.
-        let infoPlist = """
-        <?xml version="1.0" encoding="UTF-8"?>
-        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-        <plist version="1.0">
-        <dict>
-            <key>CFBundleName</key>
-            <string>\(appName)</string>
-            <key>CFBundleDisplayName</key>
-            <string>\(displayName)</string>
-            <key>CFBundleIdentifier</key>
-            <string>\(bundleID)</string>
-            <key>CFBundleVersion</key>
-            <string>1.0</string>
-            <key>CFBundleShortVersionString</key>
-            <string>1.0</string>
-            <key>CFBundlePackageType</key>
-            <string>APPL</string>
-            <key>CFBundleExecutable</key>
-            <string>\(appName)</string>
-            <key>LSMinimumSystemVersion</key>
-            <string>14.0</string>
-            <key>NSHighResolutionCapable</key>
-            <true/>
-            <key>NSPrincipalClass</key>
-            <string>NSApplication</string>
-        </dict>
-        </plist>
-        """
-        try infoPlist.write(
-            toFile: bundle.appending("Contents").appending("Info.plist").string,
-            atomically: true,
-            encoding: .utf8
-        )
+        // 2b. App icon: copy Icons/AppIcon.icns into Resources (if present).
+        let iconSrc = root.appending(component: "Icons").appending(component: "AppIcon.icns")
+        let hasIcon = fm.fileExists(atPath: iconSrc.path(percentEncoded: false))
+        if hasIcon {
+            try fm.copyItem(at: iconSrc,
+                            to: resourcesDir.appending(component: "AppIcon.icns"))
+        }
+
+        // 3. Write Info.plist as a compiled *binary* property list — the format
+        // Xcode actually ships — built from typed data instead of an XML string.
+        var info: [String: Any] = [
+            "CFBundleName": appName,
+            "CFBundleDisplayName": displayName,
+            "CFBundleIdentifier": bundleID,
+            "CFBundleVersion": "1.0",
+            "CFBundleShortVersionString": "1.0",
+            "CFBundlePackageType": "APPL",
+            "CFBundleExecutable": appName,
+            "LSMinimumSystemVersion": "14.0",
+            "NSHighResolutionCapable": true,
+            "NSPrincipalClass": "NSApplication",
+        ]
+        if hasIcon {
+            info["CFBundleIconFile"] = "AppIcon"
+            info["CFBundleIconName"] = "AppIcon"
+        }
+        let infoData = try PropertyListSerialization.data(fromPropertyList: info, format: .binary, options: 0)
+        try infoData.write(to: bundle.appending(component: "Contents").appending(component: "Info.plist"))
 
         // 4. Ad-hoc code signature so Gatekeeper allows local launch.
         let codesign = Process()
         codesign.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
-        codesign.arguments = ["--force", "--deep", "--sign", "-", bundle.string]
+        codesign.arguments = ["--force", "--deep", "--sign", "-", bundle.path(percentEncoded: false)]
         try? codesign.run()
         codesign.waitUntilExit()
 
-        Diagnostics.remark("Created \(bundle.string)")
+        Diagnostics.remark("Created \(bundle.path(percentEncoded: false))")
         print("✅ Built \(appName).app — open it with:  open \(appName).app")
     }
 }

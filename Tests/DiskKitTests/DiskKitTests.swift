@@ -2,6 +2,23 @@ import XCTest
 import Foundation
 @testable import DiskKit
 
+/// Thread-safe sink for the streaming scan's callbacks, which fire on scanner
+/// threads. Reads are safe once `scanStreaming` (synchronous) has returned.
+private final class StreamSink: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _root: DirNode?
+    private var _children: [Int: DirNode] = [:]
+    private var _doneCount = 0
+
+    var root: DirNode? { lock.withLock { _root } }
+    var children: [Int: DirNode] { lock.withLock { _children } }
+    var doneCount: Int { lock.withLock { _doneCount } }
+
+    func setRoot(_ n: DirNode) { lock.withLock { _root = n } }
+    func addChild(_ i: Int, _ n: DirNode) { lock.withLock { _children[i] = n } }
+    func finish() { lock.withLock { _doneCount += 1 } }
+}
+
 final class ClassifierTests: XCTestCase {
     func testReclaimableDirsOverrideChildren() {
         let nm = Classifier.classifyDir("node_modules")
@@ -99,5 +116,64 @@ final class TreeScannerTests: XCTestCase {
         XCTAssertEqual(formatSize(0), "0 KB")
         XCTAssertEqual(formatSize(2 * 1_073_741_824), "2.0 GB")
         XCTAssertTrue(formatSize(5 * 1_048_576).hasSuffix("MB"))
+    }
+
+    /// The streaming scan must report every top-level subtree exactly once and,
+    /// once reassembled, match the blocking scan byte-for-byte. This exercises
+    /// the shared work-stealing queue and the per-subtree completion tracker.
+    func testStreamingMatchesBlockingScan() throws {
+        let base = FileManager.default.temporaryDirectory
+            .appendingPathComponent("diskkit-stream-\(UUID().uuidString)")
+        let fm = FileManager.default
+        // A deliberately lopsided tree: nested dirs, an override dir, an empty
+        // dir, and a loose top-level file (which belongs to the root, not a
+        // subtree).
+        try fm.createDirectory(at: base.appendingPathComponent("alpha/sub/deep"),
+                               withIntermediateDirectories: true)
+        try fm.createDirectory(at: base.appendingPathComponent("beta/node_modules"),
+                               withIntermediateDirectories: true)
+        try fm.createDirectory(at: base.appendingPathComponent("gamma"),
+                               withIntermediateDirectories: true)
+        try Data(count: 30_000).write(to: base.appendingPathComponent("alpha/sub/deep/a.bin"))
+        try Data(count: 10_000).write(to: base.appendingPathComponent("alpha/b.bin"))
+        try Data(count: 50_000).write(to: base.appendingPathComponent("beta/node_modules/dep.bin"))
+        try Data(count: 5_000).write(to: base.appendingPathComponent("loose.md"))
+        defer { try? fm.removeItem(at: base) }
+
+        let blocking = TreeScanner.scan(base.path)
+
+        // Collect the streamed pieces (callbacks fire on scanner threads). The
+        // scan is synchronous, so everything is in by the time it returns.
+        let sink = StreamSink()
+        TreeScanner.scanStreaming(
+            base.path, progress: ScanProgress(),
+            onRoot:  { node in sink.setRoot(node) },
+            onChild: { i, node in sink.addChild(i, node) },
+            onDone:  { sink.finish() }
+        )
+
+        let rootNode = try XCTUnwrap(sink.root)
+        let placeholders = rootNode.children
+        XCTAssertEqual(sink.doneCount, 1, "onDone fires exactly once")
+        XCTAssertEqual(placeholders.count, blocking.children.count,
+                       "one placeholder per top-level directory")
+        XCTAssertEqual(Set(sink.children.keys), Set(0..<placeholders.count),
+                       "every top-level subtree reported exactly once, no gaps or repeats")
+
+        // Reassemble in placeholder order and compare to the blocking scan.
+        let ordered = (0..<placeholders.count).map { sink.children[$0]! }
+        let streamed = DirNode(name: rootNode.name, category: rootNode.category,
+                               isReclaimable: rootNode.isReclaimable,
+                               fileBytes: rootNode.fileBytes, children: ordered)
+        XCTAssertEqual(streamed.size, blocking.size,
+                       "streamed tree totals the same as the blocking scan")
+
+        // Per-subtree sizes line up by name (order may differ between the two).
+        let streamedByName = Dictionary(uniqueKeysWithValues: streamed.children.map { ($0.name, $0.size) })
+        for c in blocking.children {
+            XCTAssertEqual(streamedByName[c.name], c.size, "subtree \(c.name) sizes match")
+        }
+        // The override dir's contents roll up to .deps in both.
+        XCTAssertEqual(Derive.typeSizes(streamed)[.deps], Derive.typeSizes(blocking)[.deps])
     }
 }

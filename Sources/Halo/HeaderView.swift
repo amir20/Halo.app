@@ -11,8 +11,7 @@ struct HeaderView: View {
                     .foregroundStyle(Palette.ink2)
                     .frame(width: 28, height: 28)
             }
-            .buttonStyle(.plain)
-            .background(RoundedRectangle(cornerRadius: 7).stroke(Palette.line))
+            .buttonStyle(.glass)
             .disabled(model.path.count <= 1)
             .opacity(model.path.count <= 1 ? 0.36 : 1)
 
@@ -44,13 +43,16 @@ struct HeaderView: View {
     }
 
     private var segmented: some View {
-        HStack(spacing: 2) {
-            segButton("By folder", .folder)
-            segButton("By type", .type)
+        // A glass track; the selected segment lifts as its own interactive glass
+        // pill, the two morphing fluidly inside the shared container.
+        GlassEffectContainer(spacing: 4) {
+            HStack(spacing: 4) {
+                segButton("By folder", .folder)
+                segButton("By type", .type)
+            }
         }
         .padding(2)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Palette.bg3))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Palette.line))
+        .glassEffect(.regular, in: .rect(cornerRadius: 9))
     }
 
     private func segButton(_ title: String, _ lens: Lens) -> some View {
@@ -59,11 +61,7 @@ struct HeaderView: View {
             .font(.system(size: 12.5, weight: .semibold))
             .foregroundStyle(on ? Palette.ink : Palette.ink3)
             .padding(.horizontal, 13).padding(.vertical, 5)
-            .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(on ? Palette.bg : Color.clear)
-                    .shadow(color: on ? .black.opacity(0.08) : .clear, radius: 1, y: 1)
-            )
+            .glassEffect(on ? .regular.interactive() : .identity, in: .rect(cornerRadius: 6))
             .contentShape(Rectangle())
             .onTapGesture { model.setMode(lens) }
     }

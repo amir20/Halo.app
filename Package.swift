@@ -2,52 +2,36 @@
 import PackageDescription
 
 let package = Package(
-    name: "ProgressApp",
+    name: "Halo",
     platforms: [
         .macOS(.v26)
     ],
     products: [
-        .executable(name: "ProgressApp", targets: ["ProgressApp"]),
-        .executable(name: "duaswift", targets: ["duaswift"]),
-        .executable(name: "DiskDial", targets: ["DiskDial"]),
+        .executable(name: "Halo", targets: ["Halo"]),
         .library(name: "DiskKit", targets: ["DiskKit"])
     ],
-    dependencies: [
-        .package(url: "https://github.com/apple/swift-argument-parser", from: "1.8.2")
-    ],
     targets: [
-        .executableTarget(
-            name: "ProgressApp",
-            path: "Sources/ProgressApp"
-        ),
-        // Disk-scanning model shared by the GUI (and reusable by the CLI):
-        // a classified directory tree built from a real filesystem walk.
+        // Disk-scanning model behind the Halo GUI: a classified directory tree
+        // built from a real, parallel filesystem walk.
         .target(
             name: "DiskKit",
             path: "Sources/DiskKit"
         ),
-        // "Disk · Dial" — a SwiftUI donut disk visualizer built on DiskKit.
+        // "Halo" — a SwiftUI donut disk visualizer built on DiskKit.
         .executableTarget(
-            name: "DiskDial",
+            name: "Halo",
             dependencies: ["DiskKit"],
-            path: "Sources/DiskDial"
+            path: "Sources/Halo"
         ),
         .testTarget(
             name: "DiskKitTests",
             dependencies: ["DiskKit"],
             path: "Tests/DiskKitTests"
         ),
-        .executableTarget(
-            name: "duaswift",
-            dependencies: [
-                .product(name: "ArgumentParser", package: "swift-argument-parser")
-            ],
-            path: "Sources/duaswift"
-        ),
         .testTarget(
-            name: "duaswiftTests",
-            dependencies: ["duaswift"],
-            path: "Tests/duaswiftTests"
+            name: "HaloTests",
+            dependencies: ["Halo", "DiskKit"],
+            path: "Tests/HaloTests"
         ),
         .plugin(
             name: "BundleApp",
@@ -58,7 +42,7 @@ let package = Package(
                 ),
                 permissions: [
                     .writeToPackageDirectory(
-                        reason: "Write the generated ProgressApp.app bundle into the project directory"
+                        reason: "Write the generated .app bundle into the project directory"
                     )
                 ]
             )
