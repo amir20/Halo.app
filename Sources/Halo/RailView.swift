@@ -144,7 +144,7 @@ struct RailView: View {
 
             Text(footerNote(n))
                 .font(.system(size: 11))
-                .foregroundStyle(model.lastReclaim?.failed ?? 0 > 0 ? Palette.reclaim : Palette.ink4)
+                .foregroundStyle((model.lastReclaim?.failed ?? 0) > 0 ? Palette.reclaim : Palette.ink4)
         }
         .padding(.horizontal, 16).padding(.vertical, 12)
         .overlay(alignment: .top) { Divider().overlay(Palette.line) }

@@ -123,6 +123,10 @@ struct ReclaimSheet: View {
 
     private func abbreviated(_ path: String) -> String {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
-        return path.hasPrefix(home) ? "~" + path.dropFirst(home.count) : path
+        if path == home { return "~" }
+        // Require a path-component boundary so "/Users/alice" doesn't match
+        // "/Users/alicetmp/…" and mangle it to "~tmp/…".
+        if path.hasPrefix(home + "/") { return "~" + path.dropFirst(home.count) }
+        return path
     }
 }
