@@ -5,8 +5,18 @@ APP  := Halo.app
 DMG  := Halo.dmg
 ICON := Icons/AppIcon.icns
 
+# Code signing / notarization. Leave SIGN_IDENTITY empty for ad-hoc local
+# builds; set it for a real release, e.g.:
+#   make release SIGN_IDENTITY="Developer ID Application: Amir Raminfar (TEAMID)"
+# NOTARY_ARGS picks the notary credentials: a stored keychain profile locally
+# (default), or `--key …` flags injected by CI.
+SIGN_IDENTITY  ?=
+export SIGN_IDENTITY
+NOTARY_PROFILE ?= halo-notary
+NOTARY_ARGS    ?= --keychain-profile $(NOTARY_PROFILE)
+
 .DEFAULT_GOAL := help
-.PHONY: help build test run app dmg icon clean
+.PHONY: help build test run app dmg pack-dmg notarize release notary-creds icon clean
 
 help: ## List available targets
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) \
@@ -21,17 +31,50 @@ test: ## Run the test suite
 run: ## Build & launch Halo from source
 	swift run Halo
 
-app: ## Package Halo.app (release binary + Info.plist + icon + ad-hoc sign)
+app: ## Package Halo.app (release binary + Info.plist + icon, signed per SIGN_IDENTITY)
 	swift package --disable-sandbox --allow-writing-to-package-directory bundle-app Halo
 
-dmg: app ## Build a drag-to-install Halo.dmg
+dmg: app pack-dmg ## Build a drag-to-install Halo.dmg
+
+# Wrap the *current* Halo.app in a DMG without rebuilding/re-signing it. Used
+# both by `dmg` and by `notarize` after the app is stapled — going through the
+# `app` target again would re-sign and strip the staple.
+pack-dmg:
 	@staging="$$(mktemp -d)"; \
-	cp -R $(APP) "$$staging/"; \
-	ln -s /Applications "$$staging/Applications"; \
-	rm -f $(DMG); \
+	cp -R $(APP) "$$staging/" && \
+	ln -s /Applications "$$staging/Applications" && \
+	rm -f $(DMG) && \
 	hdiutil create -volname Halo -srcfolder "$$staging" -ov -format UDZO $(DMG) >/dev/null; \
-	rm -rf "$$staging"; \
-	echo "✅ Built $(DMG)"
+	status=$$?; rm -rf "$$staging"; exit $$status
+	@echo "✅ Built $(DMG)"
+
+# Notarize BOTH artifacts: staple the .app (what a Homebrew cask copies into
+# /Applications — it must be stapled to launch, since the DMG is discarded) AND
+# staple the .dmg (for direct downloads). Each has its own hash, so it's two
+# submissions: the app first, then the DMG built around the stapled app.
+notarize: app ## Notarize & staple Halo.app + Halo.dmg (needs Developer ID + creds)
+	@test -n "$(SIGN_IDENTITY)" || { echo "❌ Set SIGN_IDENTITY (see 'make help')"; exit 1; }
+	@echo "→ notarizing $(APP)…"
+	@tmp="$$(mktemp -d)"; \
+	ditto -c -k --keepParent $(APP) "$$tmp/$(APP).zip" && \
+	xcrun notarytool submit "$$tmp/$(APP).zip" $(NOTARY_ARGS) --wait; \
+	status=$$?; rm -rf "$$tmp"; exit $$status
+	xcrun stapler staple $(APP)
+	@$(MAKE) --no-print-directory pack-dmg
+	@echo "→ notarizing $(DMG)…"
+	xcrun notarytool submit $(DMG) $(NOTARY_ARGS) --wait
+	xcrun stapler staple $(DMG)
+	@echo "── verification ──"
+	xcrun stapler validate $(APP)
+	xcrun stapler validate $(DMG)
+	spctl -a -t exec -vv $(APP)
+	@echo "✅ Notarized & stapled $(APP) and $(DMG)"
+
+release: notarize ## Full signed + notarized release DMG (set SIGN_IDENTITY)
+	@echo "✅ Release ready: $(DMG)"
+
+notary-creds: ## Store an App Store Connect API key as the local notary profile (interactive)
+	xcrun notarytool store-credentials "$(NOTARY_PROFILE)"
 
 icon: $(ICON) ## Regenerate the app icon (.icns) from Icons/make-icon.swift
 
