@@ -3,6 +3,7 @@ name: CI
 on:
   push:
     branches: [main]
+    tags: ['v*']       # version tags (e.g. v1.0.0) trigger a signed release
   pull_request:        # run on PRs against any base branch (incl. stacked PRs)
 
 concurrency:
@@ -37,6 +38,9 @@ jobs:
   package:
     name: Package Halo.dmg
     needs: build-test
+    # Branch/PR builds get an ad-hoc-signed preview DMG. Tags go through the
+    # signed `release` job below instead.
+    if: ${{ !startsWith(github.ref, 'refs/tags/') }}
     runs-on: macos-26
 
     steps:
@@ -57,3 +61,62 @@ jobs:
           name: Halo-dmg
           path: Halo.dmg
           if-no-files-found: error
+
+  release:
+    name: Signed release
+    needs: build-test
+    # Only on version tags (e.g. v1.0.0), where the signing secrets are trusted.
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: macos-26
+    permissions:
+      contents: write          # create the GitHub Release + attach the DMG
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select latest stable Xcode
+        run: |
+          XC="$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1)"
+          if [ -n "$XC" ]; then sudo xcode-select -s "$XC"; fi
+          swift --version
+
+      # Re-create the Developer ID identity in a throwaway keychain from the
+      # base64-encoded .p12 secret so codesign can sign non-interactively.
+      - name: Import Developer ID certificate
+        env:
+          CERT_P12: ${{ secrets.DEVID_CERT_P12 }}
+          CERT_PW:  ${{ secrets.DEVID_CERT_PASSWORD }}
+          KC_PW:    ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          KC="$RUNNER_TEMP/signing.keychain-db"
+          echo "$CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$KC_PW" "$KC"
+          security set-keychain-settings -lut 21600 "$KC"
+          security unlock-keychain -p "$KC_PW" "$KC"
+          security import "$RUNNER_TEMP/cert.p12" -P "$CERT_PW" -A -t cert -f pkcs12 -k "$KC"
+          security set-key-partition-list -S apple-tool:,apple: -k "$KC_PW" "$KC" >/dev/null
+          security list-keychain -d user -s "$KC" login.keychain-db
+          rm "$RUNNER_TEMP/cert.p12"
+
+      # Sign (via the plugin reading SIGN_IDENTITY) and notarize with the API
+      # key passed directly to notarytool.
+      - name: Build, sign & notarize Halo.dmg
+        env:
+          SIGN_IDENTITY:    ${{ secrets.SIGN_IDENTITY }}
+          NOTARY_KEY_P8:    ${{ secrets.NOTARY_KEY_P8 }}
+          NOTARY_KEY_ID:    ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+        run: |
+          echo "$NOTARY_KEY_P8" | base64 --decode > "$RUNNER_TEMP/key.p8"
+          make notarize NOTARY_ARGS="--key $RUNNER_TEMP/key.p8 --key-id $NOTARY_KEY_ID --issuer $NOTARY_ISSUER_ID"
+          rm -f "$RUNNER_TEMP/key.p8"
+
+      # Publish the notarized DMG as a GitHub Release asset — the stable URL
+      # the Homebrew cask downloads from.
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" Halo.dmg \
+            --title "Halo $GITHUB_REF_NAME" \
+            --generate-notes
