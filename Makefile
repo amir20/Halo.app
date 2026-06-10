@@ -41,12 +41,12 @@ dmg: app pack-dmg ## Build a drag-to-install Halo.dmg
 # `app` target again would re-sign and strip the staple.
 pack-dmg:
 	@staging="$$(mktemp -d)"; \
-	cp -R $(APP) "$$staging/"; \
-	ln -s /Applications "$$staging/Applications"; \
-	rm -f $(DMG); \
+	cp -R $(APP) "$$staging/" && \
+	ln -s /Applications "$$staging/Applications" && \
+	rm -f $(DMG) && \
 	hdiutil create -volname Halo -srcfolder "$$staging" -ov -format UDZO $(DMG) >/dev/null; \
-	rm -rf "$$staging"; \
-	echo "✅ Built $(DMG)"
+	status=$$?; rm -rf "$$staging"; exit $$status
+	@echo "✅ Built $(DMG)"
 
 # Notarize BOTH artifacts: staple the .app (what a Homebrew cask copies into
 # /Applications — it must be stapled to launch, since the DMG is discarded) AND
@@ -54,11 +54,11 @@ pack-dmg:
 # submissions: the app first, then the DMG built around the stapled app.
 notarize: app ## Notarize & staple Halo.app + Halo.dmg (needs Developer ID + creds)
 	@test -n "$(SIGN_IDENTITY)" || { echo "❌ Set SIGN_IDENTITY (see 'make help')"; exit 1; }
+	@echo "→ notarizing $(APP)…"
 	@tmp="$$(mktemp -d)"; \
-	ditto -c -k --keepParent $(APP) "$$tmp/$(APP).zip"; \
-	echo "→ notarizing $(APP)…"; \
+	ditto -c -k --keepParent $(APP) "$$tmp/$(APP).zip" && \
 	xcrun notarytool submit "$$tmp/$(APP).zip" $(NOTARY_ARGS) --wait; \
-	rm -rf "$$tmp"
+	status=$$?; rm -rf "$$tmp"; exit $$status
 	xcrun stapler staple $(APP)
 	@$(MAKE) --no-print-directory pack-dmg
 	@echo "→ notarizing $(DMG)…"

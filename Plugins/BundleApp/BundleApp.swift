@@ -63,7 +63,7 @@ struct BundleApp: CommandPlugin {
             "CFBundleShortVersionString": "1.0",
             "CFBundlePackageType": "APPL",
             "CFBundleExecutable": appName,
-            "LSMinimumSystemVersion": "14.0",
+            "LSMinimumSystemVersion": "26.0",
             "NSHighResolutionCapable": true,
             "NSPrincipalClass": "NSApplication",
         ]
