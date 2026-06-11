@@ -237,11 +237,14 @@ final class ScanModel {
         segments = computeSegments()
         arcs = computeArcs(segments)
         if let cur = current, path.contains(where: \.isReclaimable) {
-            // Viewing inside (or at) a reclaim root: the whole current folder is
-            // purgable — even when its own `reclaim` is nil because the mark lives
-            // on an ancestor. Offer the current folder itself as the target.
-            reclaimTargets = [cur]
-            reclTotal = cur.size
+            // Viewing inside (or at) a reclaim root: everything here is purgable —
+            // even when `reclaim` is nil, because the mark lives on an ancestor.
+            // Offer the current folder's children so they can be reviewed and
+            // selected individually (matching the sidebar breakdown); a childless
+            // folder falls back to offering itself.
+            let kids = cur.children.filter { $0.size > 0 }
+            reclaimTargets = kids.isEmpty ? [cur] : kids
+            reclTotal = reclaimTargets.reduce(0) { $0 + $1.size }
         } else {
             reclTotal = current.map(Derive.reclaimBytes) ?? 0
             reclaimTargets = current.map(Derive.reclaimRoots) ?? []
