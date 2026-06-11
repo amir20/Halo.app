@@ -3,8 +3,8 @@ name: CI
 on:
   push:
     branches: [main]
-    tags: ['v*']       # version tags (e.g. v1.0.0) trigger a signed release
-  pull_request:        # run on PRs against any base branch (incl. stacked PRs)
+    tags: ["v*"] # version tags (e.g. v1.0.0) trigger a signed release
+  pull_request: # run on PRs against any base branch (incl. stacked PRs)
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -69,7 +69,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: macos-26
     permissions:
-      contents: write          # create the GitHub Release + attach the DMG
+      contents: write # create the GitHub Release + attach the DMG
 
     steps:
       - uses: actions/checkout@v6
@@ -85,8 +85,8 @@ jobs:
       - name: Import Developer ID certificate
         env:
           CERT_P12: ${{ secrets.DEVID_CERT_P12 }}
-          CERT_PW:  ${{ secrets.DEVID_CERT_PASSWORD }}
-          KC_PW:    ${{ secrets.KEYCHAIN_PASSWORD }}
+          CERT_PW: ${{ secrets.DEVID_CERT_PASSWORD }}
+          KC_PW: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
           KC="$RUNNER_TEMP/signing.keychain-db"
           echo "$CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
@@ -102,9 +102,9 @@ jobs:
       # key passed directly to notarytool.
       - name: Build, sign & notarize Halo.dmg
         env:
-          SIGN_IDENTITY:    ${{ secrets.SIGN_IDENTITY }}
-          NOTARY_KEY_P8:    ${{ secrets.NOTARY_KEY_P8 }}
-          NOTARY_KEY_ID:    ${{ secrets.NOTARY_KEY_ID }}
+          SIGN_IDENTITY: ${{ secrets.SIGN_IDENTITY }}
+          NOTARY_KEY_P8: ${{ secrets.NOTARY_KEY_P8 }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
           NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
         run: |
           echo "$NOTARY_KEY_P8" | base64 --decode > "$RUNNER_TEMP/key.p8"
