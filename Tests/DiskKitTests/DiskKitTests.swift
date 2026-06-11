@@ -83,6 +83,30 @@ final class ClassifierTests: XCTestCase {
         XCTAssertNil(classify("Movies").reclaim)
     }
 
+    /// `~/.cargo` is not a cache: it holds `bin/` (every `cargo install`ed tool)
+    /// and `credentials.toml` (registry tokens). It must never be offered as a
+    /// reclaim target — and must not override descendants, so the genuinely
+    /// regenerable `registry`/caches inside it can flag on their own evidence.
+    func testCargoIsNotReclaimable() {
+        let cargo = classify(".cargo")
+        XCTAssertNil(cargo.reclaim, ".cargo holds installed binaries and credentials")
+        XCTAssertNil(cargo.filesAs, ".cargo must not absorb its descendants")
+    }
+
+    /// `site-packages` is high only inside a venv (where the venv itself is the
+    /// manifest-backed target). By name alone it could be a Homebrew/system
+    /// Python's — deleting that breaks pip itself — so it stays medium, never
+    /// pre-checked.
+    func testSitePackagesAloneIsMedium() {
+        XCTAssertEqual(classify("site-packages").reclaim?.confidence, .medium)
+    }
+
+    /// A `wandb` dir holds run logs that may never have been synced; deleting
+    /// unsynced experiment data is not regenerable. Medium, never pre-checked.
+    func testWandbIsMedium() {
+        XCTAssertEqual(classify("wandb").reclaim?.confidence, .medium)
+    }
+
     func testFileExtensionCategories() {
         XCTAssertEqual(Classifier.classifyFile(ext: "mp4"), .media)
         XCTAssertEqual(Classifier.classifyFile(ext: "swift"), .code)
@@ -298,6 +322,45 @@ final class DerivationsTests: XCTestCase {
         XCTAssertEqual(sizes, sizes.sorted(by: >))
     }
 
+    /// Pruning a trashed subtree rebuilds only its ancestors: sizes recompute,
+    /// untouched subtrees are shared, and the parent chain stays navigable.
+    func testRemovingPrunesSubtreeAndRecomputesSizes() {
+        let root = MockTree.make()
+        let library = root.children.first { $0.name == "Library" }!
+        let caches = library.children.first { $0.name == "Caches" }!
+
+        let pruned = Derive.removing([caches.id], from: root)
+        let newRoot = pruned!
+        XCTAssertEqual(newRoot.size, root.size - caches.size, "ancestor sizes recompute")
+
+        func find(_ n: DirNode, _ name: String) -> DirNode? {
+            if n.name == name { return n }
+            for c in n.children { if let f = find(c, name) { return f } }
+            return nil
+        }
+        XCTAssertNil(find(newRoot, "Caches"), "the pruned subtree is gone")
+        let nm = find(newRoot, "node_modules")
+        XCTAssertNotNil(nm, "untouched subtrees survive")
+        XCTAssertEqual(Derive.pathTo(nm!).first?.name, newRoot.name,
+                       "the kept subtree's parent chain reaches the new root")
+    }
+
+    /// Removing nothing returns the same instance — the caller uses identity to
+    /// detect stale node references and fall back to a rescan.
+    func testRemovingUnknownIDsReturnsSameInstance() {
+        let root = MockTree.make()
+        let other = MockTree.make()   // identities from a different tree
+        XCTAssertTrue(Derive.removing([other.children[0].id], from: root) === root)
+        XCTAssertTrue(Derive.removing([], from: root) === root)
+    }
+
+    /// Removing the root itself yields `nil` — the caller decides what an empty
+    /// tree looks like.
+    func testRemovingRootReturnsNil() {
+        let root = MockTree.make()
+        XCTAssertNil(Derive.removing([root.id], from: root))
+    }
+
     func testPathToRoot() {
         let root = MockTree.make()
         let library = root.children.first { $0.name == "Library" }!
@@ -331,15 +394,96 @@ final class TreeScannerTests: XCTestCase {
         XCTAssertNotNil(sizes[.deps])
     }
 
+    /// A file hard-linked into two places must count its blocks once, the way
+    /// `du` does — git object stores and app bundles hard-link heavily, and
+    /// double-counting them inflates every ancestor.
+    func testHardLinkedFileCountedOnce() throws {
+        let fm = FileManager.default
+        let base = fm.temporaryDirectory
+            .appendingPathComponent("diskkit-hardlink-\(UUID().uuidString)")
+        try fm.createDirectory(at: base.appendingPathComponent("a"), withIntermediateDirectories: true)
+        try fm.createDirectory(at: base.appendingPathComponent("b"), withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: base) }
+
+        let original = base.appendingPathComponent("a/blob.bin")
+        try Data(count: 100_000).write(to: original)
+        try fm.linkItem(at: original, to: base.appendingPathComponent("b/blob.bin"))
+
+        // Control: the same single file with no second link.
+        let control = fm.temporaryDirectory
+            .appendingPathComponent("diskkit-hardlink-ctl-\(UUID().uuidString)")
+        try fm.createDirectory(at: control.appendingPathComponent("a"), withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: control) }
+        try Data(count: 100_000).write(to: control.appendingPathComponent("a/blob.bin"))
+
+        let linked = TreeScanner.scan(base.path)
+        let single = TreeScanner.scan(control.path)
+        XCTAssertEqual(linked.size, single.size,
+                       "two links to one inode must count its blocks exactly once")
+    }
+
+    /// An unreadable directory is skipped silently by the walk — but it must be
+    /// *counted*, so the UI can say "N folders unreadable" (the Full Disk Access
+    /// hint) instead of quietly under-reporting.
+    func testUnreadableDirCountsAsSkipped() throws {
+        let fm = FileManager.default
+        let base = fm.temporaryDirectory
+            .appendingPathComponent("diskkit-skip-\(UUID().uuidString)")
+        let locked = base.appendingPathComponent("locked")
+        try fm.createDirectory(at: locked, withIntermediateDirectories: true)
+        try fm.createDirectory(at: base.appendingPathComponent("open"), withIntermediateDirectories: true)
+        try Data(count: 4_000).write(to: base.appendingPathComponent("open/x.bin"))
+        try fm.setAttributes([.posixPermissions: 0o000], ofItemAtPath: locked.path)
+        addTeardownBlock {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: locked.path)
+            try? FileManager.default.removeItem(at: base)
+        }
+
+        let progress = ScanProgress()
+        _ = TreeScanner.scan(base.path, progress: progress)
+        XCTAssertEqual(progress.snapshot().skipped, 1, "the unreadable dir is counted")
+        XCTAssertGreaterThan(progress.snapshot().files, 0, "the readable part still scans")
+    }
+
     func testFormatSize() {
         XCTAssertEqual(formatSize(0), "0 KB")
         XCTAssertEqual(formatSize(2 * 1_073_741_824), "2.0 GB")
         XCTAssertTrue(formatSize(5 * 1_048_576).hasSuffix("MB"))
     }
 
+    /// A cancelled token stops the walk: the placeholder root is still reported
+    /// (it's listed synchronously, before the workers start) and `onDone` fires,
+    /// but no subtree completes. This is what lets a new scan supersede an
+    /// in-flight one without abandoning threads inside a huge walk.
+    func testCancelledTokenStopsStreaming() throws {
+        let fm = FileManager.default
+        let base = fm.temporaryDirectory
+            .appendingPathComponent("diskkit-cancel-\(UUID().uuidString)")
+        try fm.createDirectory(at: base.appendingPathComponent("alpha/sub"), withIntermediateDirectories: true)
+        try fm.createDirectory(at: base.appendingPathComponent("beta"), withIntermediateDirectories: true)
+        try Data(count: 10_000).write(to: base.appendingPathComponent("alpha/sub/a.bin"))
+        try Data(count: 10_000).write(to: base.appendingPathComponent("beta/b.bin"))
+        addTeardownBlock { try? FileManager.default.removeItem(at: base) }
+
+        let token = ScanToken()
+        token.cancel()
+
+        let sink = StreamSink()
+        TreeScanner.scanStreaming(
+            base.path, progress: ScanProgress(), token: token,
+            onRoot:  { sink.setRoot($0) },
+            onChild: { i, node in sink.addChild(i, node) },
+            onDone:  { sink.finish() }
+        )
+
+        XCTAssertNotNil(sink.root, "the placeholder root is reported even when cancelled")
+        XCTAssertTrue(sink.children.isEmpty, "no subtree completes after cancellation")
+        XCTAssertEqual(sink.doneCount, 1, "onDone still fires so the caller can finish up")
+    }
+
     /// The streaming scan must report every top-level subtree exactly once and,
     /// once reassembled, match the blocking scan byte-for-byte. This exercises
-    /// the shared work-stealing queue and the per-subtree completion tracker.
+    /// the shared work queue and the per-subtree completion tracker.
     func testStreamingMatchesBlockingScan() throws {
         let base = FileManager.default.temporaryDirectory
             .appendingPathComponent("diskkit-stream-\(UUID().uuidString)")

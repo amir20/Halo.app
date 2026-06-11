@@ -156,10 +156,16 @@ struct RailView: View {
     }
 
     private func footerNote(_ n: Int) -> String {
+        var note: String
         if let r = model.lastReclaim {
-            let base = "Moved \(r.trashed) to Trash"
-            return r.failed > 0 ? "\(base) · \(r.failed) couldn't be removed" : base
+            note = "Moved \(r.trashed) to Trash"
+            if r.failed > 0 { note += " · \(r.failed) couldn't be removed" }
+        } else {
+            note = "\(n) safe target\(n == 1 ? "" : "s") · everything moves to Trash first"
         }
-        return "\(n) safe target\(n == 1 ? "" : "s") · everything moves to Trash first"
+        if model.skippedDirs > 0 {
+            note += " · \(model.skippedDirs) unreadable — grant Full Disk Access for a full picture"
+        }
+        return note
     }
 }

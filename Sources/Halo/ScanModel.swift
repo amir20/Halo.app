@@ -34,6 +34,16 @@ struct Arc: Identifiable {
 
 enum Lens { case folder, type }
 
+/// One scan callback, carried through an `AsyncStream` so the main actor
+/// consumes them strictly in the order the scanner produced them (root →
+/// children → done). Unstructured per-callback `Task` hops carried no ordering
+/// guarantee — an early `child` could beat `root` and be dropped.
+enum ScanEvent: Sendable {
+    case root(DirNode)
+    case child(Int, DirNode)
+    case done
+}
+
 /// Summary of a completed reclaim, for a brief confirmation note.
 struct ReclaimOutcome { let trashed: Int; let failed: Int }
 
@@ -67,6 +77,9 @@ final class ScanModel {
     /// Live counters polled from the scanner while a scan is in flight.
     var liveFiles = 0
     var liveBytes: Int64 = 0
+    /// Directories the walk couldn't read (missing Full Disk Access, others'
+    /// home dirs…). Disclosed so an incomplete picture is never silent.
+    private(set) var skippedDirs = 0
     /// Whether the scanning activity ring is shown. Gated behind a short delay so
     /// a fast scan never flashes it.
     var showRing = false
@@ -87,6 +100,11 @@ final class ScanModel {
     /// the navigated `path` to recover the real directory under the breadcrumb.
     private var scanRootPath = ""
 
+    /// Name of the volume the scan root lives on (e.g. "Macintosh HD"), for the
+    /// leading breadcrumb and the donut subtitle. `nil` for in-memory trees.
+    private(set) var volumeName: String?
+    var volumeLabel: String { volumeName ?? "this volume" }
+
     // Pieces kept so the root can be rebuilt as top-level subtrees stream in.
     private var rootName = "~"
     private var rootCategory: FileCategory = .other
@@ -98,23 +116,35 @@ final class ScanModel {
     /// Fires once, 0.3s into a scan, to reveal the progress ring. Invalidated if
     /// the scan finishes first, so quick scans never show it.
     private var ringDelayTimer: Timer?
+    /// Cancels the in-flight walk when a new scan supersedes it.
+    private var scanToken: ScanToken?
+    /// The single ordered consumer of the in-flight scan's events.
+    private var scanConsumer: Task<Void, Never>?
+    /// Bumped whenever a scan starts (or a tree is loaded), so events from a
+    /// superseded scan are recognized and dropped.
+    private var scanEpoch = 0
 
     // MARK: - Loading
 
     /// Streams a real scan: the donut appears immediately and fills in as each
-    /// top-level subtree completes, with a live counter throughout.
+    /// top-level subtree completes, with a live counter throughout. Starting a
+    /// scan supersedes any in-flight one — its walk is cancelled and any events
+    /// it still emits are dropped.
     func scan(path scanPath: String) {
+        supersedeInFlightScan()
         scanRootPath = scanPath
+        volumeName = try? URL(fileURLWithPath: scanPath)
+            .resourceValues(forKeys: [.volumeNameKey]).volumeName
         scanning = true
         scanError = nil
         liveFiles = 0; liveBytes = 0
+        skippedDirs = 0
         showRing = false
         // Don't carry a prior reclaim's footer note into an unrelated scan; a
         // post-reclaim rescan re-applies it from `pendingReclaim` in finishScan.
         lastReclaim = nil
         let prog = ScanProgress()
         progress = prog
-        ringDelayTimer?.invalidate()
         ringDelayTimer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: false) { [weak self] _ in
             Task { @MainActor in
                 guard let self, self.scanning else { return }
@@ -127,16 +157,53 @@ final class ScanModel {
                 let s = prog.snapshot()
                 self.liveFiles = s.files
                 self.liveBytes = s.bytes
+                self.skippedDirs = s.skipped
             }
         }
+        let token = ScanToken()
+        scanToken = token
+        let (events, sink) = AsyncStream.makeStream(of: ScanEvent.self)
         Task.detached(priority: .userInitiated) {
             TreeScanner.scanStreaming(
-                scanPath, progress: prog,
-                onRoot:  { node in Task { @MainActor in self.installRoot(node) } },
-                onChild: { i, node in Task { @MainActor in self.applyChild(i, node) } },
-                onDone:  { Task { @MainActor in self.finishScan() } }
+                scanPath, progress: prog, token: token,
+                onRoot:  { sink.yield(.root($0)) },
+                onChild: { sink.yield(.child($0, $1)) },
+                onDone:  { sink.yield(.done); sink.finish() }
             )
         }
+        let epoch = scanEpoch
+        scanConsumer = Task { [weak self] in
+            for await event in events {
+                guard let self, self.scanEpoch == epoch else { return }
+                switch event {
+                case .root(let node):           self.installRoot(node)
+                case .child(let i, let node):   self.applyChild(i, node)
+                case .done:                     self.finishScan()
+                }
+            }
+        }
+    }
+
+    /// Rescans the current root from disk, restoring the navigation scope once
+    /// the fresh tree arrives.
+    func rescan() {
+        guard !scanRootPath.isEmpty else { return }
+        let scope = path.dropFirst().map(\.name)
+        scan(path: scanRootPath)
+        pendingScopeNames = scope
+    }
+
+    /// Stops the in-flight scan (if any) from reaching this model again: its
+    /// walk is cancelled, its timers die, and the epoch bump makes its already-
+    /// queued events no-ops.
+    private func supersedeInFlightScan() {
+        scanToken?.cancel()
+        scanToken = nil
+        scanConsumer?.cancel()
+        scanConsumer = nil
+        scanEpoch += 1
+        pollTimer?.invalidate(); pollTimer = nil
+        ringDelayTimer?.invalidate(); ringDelayTimer = nil
     }
 
     private func installRoot(_ node: DirNode) {
@@ -166,9 +233,20 @@ final class ScanModel {
     private func finishScan() {
         pollTimer?.invalidate(); pollTimer = nil
         ringDelayTimer?.invalidate(); ringDelayTimer = nil
+        if let s = progress?.snapshot() {
+            liveFiles = s.files
+            liveBytes = s.bytes
+            skippedDirs = s.skipped
+        }
         if path.count == 1, let rebuilt = rebuildRoot() {
             root = rebuilt
             path = [rebuilt]
+        }
+        // An empty tree from a root we can't read is an error, not a clean
+        // result — say so instead of presenting a silent empty donut.
+        if let r = root, r.children.isEmpty, r.fileBytes.isEmpty,
+           !FileManager.default.isReadableFile(atPath: scanRootPath) {
+            scanError = "Couldn't read \(scanRootPath)"
         }
         // Restore the scope we were in before a post-reclaim rescan.
         if let names = pendingScopeNames, let r = root {
@@ -199,10 +277,14 @@ final class ScanModel {
     /// absolute path the root represents, so `absoluteURL(for:)` can reconstruct
     /// real paths in tests just as a live scan does.
     func load(_ tree: DirNode, rootPath: String = "") {
+        supersedeInFlightScan()
         scanRootPath = rootPath
+        volumeName = nil
         root = tree
         path = [tree]
         scanning = false
+        scanError = nil
+        skippedDirs = 0
         refresh()
         sweepKey += 1
     }
@@ -308,9 +390,15 @@ final class ScanModel {
         }
     }
 
+    /// Breadcrumb labels: the scan root's real volume name (when known — an
+    /// in-memory tree has none), then the navigated path.
     var crumbs: [String] {
-        ["Macintosh HD"] + path.map { displayName($0.name) }
+        let names = path.map { displayName($0.name) }
+        return volumeName.map { [$0] + names } ?? names
     }
+
+    /// Index of the first *path* crumb (0, or 1 when a volume crumb leads).
+    private var crumbOffset: Int { volumeName == nil ? 0 : 1 }
 
     func displayName(_ name: String) -> String {
         name == homeLeaf ? "~" : name
@@ -328,6 +416,20 @@ final class ScanModel {
     /// Real filesystem URL of the directory currently shown in the breadcrumb.
     var currentURL: URL {
         current.map(absoluteURL(for:)) ?? URL(fileURLWithPath: scanRootPath)
+    }
+
+    /// Asks for a directory via the standard open panel and scans it. Modal and
+    /// user-driven — exercised by hand, not headlessly testable.
+    func chooseFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Scan"
+        panel.message = "Choose a folder for Halo to scan"
+        if panel.runModal() == .OK, let url = panel.url {
+            scan(path: url.path)
+        }
     }
 
     /// Opens a Finder window showing the current directory's contents.
@@ -374,22 +476,45 @@ final class ScanModel {
         return nil
     }
 
-    /// Move the chosen targets to the Trash, then rescan and restore the scope.
-    /// Trashing runs off the main actor; results hop back to drive the rescan.
+    /// Move the chosen targets to the Trash, then prune them out of the local
+    /// tree. Trashing runs off the main actor; results hop back to update.
     func performReclaim(_ items: [ReclaimItem]) {
         guard !items.isEmpty else { return }
-        let urls = items.map(\.url)
-        let scopeNames = path.dropFirst().map(\.name)
         showReclaimSheet = false
         Task.detached(priority: .userInitiated) {
-            let result = Reclaimer.moveToTrash(urls)
-            await MainActor.run {
-                self.pendingReclaim = ReclaimOutcome(trashed: result.trashed.count,
-                                                     failed: result.failed.count)
-                self.pendingScopeNames = scopeNames
-                self.scan(path: self.scanRootPath)
-            }
+            let result = Reclaimer.moveToTrash(items.map(\.url))
+            let trashedURLs = Set(result.trashed)
+            let ids = Set(items.filter { trashedURLs.contains($0.url) }.map(\.id))
+            let outcome = ReclaimOutcome(trashed: result.trashed.count,
+                                         failed: result.failed.count)
+            await MainActor.run { self.applyReclaimResult(trashedIDs: ids, outcome: outcome) }
         }
+    }
+
+    /// Applies a finished reclaim by pruning the trashed subtrees out of the
+    /// tree in place — ancestor sizes recompute on the rebuild — so the donut
+    /// updates instantly instead of paying for a full rescan. Falls back to a
+    /// rescan only when none of the node identities are found anymore (the tree
+    /// was restitched by a still-streaming scan since the sheet was built).
+    func applyReclaimResult(trashedIDs: Set<ObjectIdentifier>, outcome: ReclaimOutcome) {
+        lastReclaim = outcome
+        guard let r = root, !trashedIDs.isEmpty else { return }
+        let pruned = Derive.removing(trashedIDs, from: r)
+        if let pruned, pruned === r {
+            pendingReclaim = outcome
+            pendingScopeNames = path.dropFirst().map(\.name)
+            scan(path: scanRootPath)
+            return
+        }
+        let names = path.dropFirst().map(\.name)
+        // A trashed scan root leaves an empty tree of the same name.
+        let newRoot = pruned ?? DirNode(name: r.name, category: r.category,
+                                        reclaim: nil, fileBytes: [:], children: [])
+        root = newRoot
+        path = Self.resolvePath(from: newRoot, names: names)
+        hover = nil
+        refresh()
+        sweepKey += 1
     }
 
     /// Re-derive a path from `root` by following child `names`, stopping at the
@@ -441,10 +566,11 @@ final class ScanModel {
     }
 
     func goTo(crumb index: Int) {
-        // crumbs[0] is "Macintosh HD"; crumbs[1...] map to path[0...].
-        guard index >= 1, index - 1 < path.count else { return }
+        // The leading volume crumb (when present) is decorative, not navigable.
+        let i = index - crumbOffset
+        guard i >= 0, i < path.count else { return }
         hover = nil; expanded = nil
-        path = Array(path.prefix(index))
+        path = Array(path.prefix(i + 1))
         refresh()
         sweepKey += 1
     }
@@ -464,5 +590,11 @@ final class ScanModel {
         sweepKey += 1
     }
 
-    private static func nid(_ node: DirNode) -> String { String(UInt(bitPattern: ObjectIdentifier(node).hashValue)) }
+    /// Stable segment id: the node's name-path from the root. Identity-based ids
+    /// died on every streaming restitch (all-new nodes), dropping the hovered
+    /// slice mid-scan; sibling names are unique within a directory, so the path
+    /// is collision-free.
+    private static func nid(_ node: DirNode) -> String {
+        Derive.pathTo(node).map(\.name).joined(separator: "/")
+    }
 }

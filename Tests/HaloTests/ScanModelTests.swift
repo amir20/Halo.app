@@ -117,6 +117,28 @@ final class ScanModelTests: XCTestCase {
         XCTAssertEqual(model.path.count, 2)
     }
 
+    /// Segment ids must be derived from the node's *path*, not its object
+    /// identity: every streaming restitch rebuilds the tree with fresh nodes,
+    /// and an identity-based id silently invalidated the hovered slice mid-scan.
+    func testSegmentIDsAreStableAcrossTreeRebuilds() {
+        func makeTree() -> DirNode {
+            let nm = DirNode(name: "node_modules", category: .deps,
+                             isReclaimable: true, fileBytes: [.deps: 2 * Self.GB], children: [])
+            let app = DirNode(name: "app", category: .other,
+                              isReclaimable: false, fileBytes: [.code: 1 * Self.GB], children: [nm])
+            return DirNode(name: "alex", category: .other,
+                           isReclaimable: false, fileBytes: [:], children: [app])
+        }
+
+        let model = ScanModel()
+        model.load(makeTree())
+        let before = model.segments.map(\.id)
+
+        model.load(makeTree())   // structurally identical, all-new objects
+        XCTAssertEqual(model.segments.map(\.id), before,
+                       "ids survive a rebuild of the same tree")
+    }
+
     /// `jump(to:)` must land on the requested directory, not bounce up to its
     /// parent when that directory has no subdirectories. Reproduces "clicking a
     /// dir goes to the parent instead".

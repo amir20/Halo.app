@@ -82,13 +82,13 @@ public enum Classifier {
     static func classifyName(_ name: String) -> NameKind {
         switch name.lowercased() {
         // Unambiguous regenerable dirs — high confidence by name alone.
-        case "node_modules", ".venv", "venv", "site-packages", "pods", ".cargo":
+        case "node_modules", ".venv", "venv", "pods":
             return NameKind(category: .deps, overridesChildren: true, reclaim: .high)
         case "deriveddata", ".next", ".turbo", ".gradle":
             return NameKind(category: .build, overridesChildren: true, reclaim: .high)
         case ".trash":
             return NameKind(category: .trash, overridesChildren: true, reclaim: .high)
-        case "wandb", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache":
+        case "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache":
             return NameKind(category: .cache, overridesChildren: true, reclaim: .high)
         // Ambiguous names — could hold real user data, so medium until something
         // corroborates (a manifest sibling or CACHEDIR.TAG lifts these to high).
@@ -98,6 +98,18 @@ public enum Classifier {
             return NameKind(category: .cache, overridesChildren: true, reclaim: .medium)
         case "vendor":
             return NameKind(category: .deps, overridesChildren: true, reclaim: .medium)
+        // Regenerable in principle, but deleting can break a live environment
+        // (a system Python's site-packages) or lose unsynced run data (wandb) —
+        // medium so the user must opt in, never pre-checked.
+        case "site-packages":
+            return NameKind(category: .deps, overridesChildren: true, reclaim: .medium)
+        case "wandb":
+            return NameKind(category: .cache, overridesChildren: true, reclaim: .medium)
+        // Not a cache at all: `.cargo` holds installed binaries (`bin/`) and
+        // registry credentials. Never a target, and no override — the genuinely
+        // regenerable `registry`/cache dirs inside it flag on their own evidence.
+        case ".cargo":
+            return NameKind(category: .deps, overridesChildren: false, reclaim: nil)
         // Non-reclaimable categories.
         case "containers":
             // Category-only, NOT an override: an app sandbox container holds its
