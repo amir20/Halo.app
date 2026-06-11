@@ -84,19 +84,43 @@ final class ScanModelReclaimTests: XCTestCase {
         return DirNode(name: "alex", category: .other, reclaim: nil, fileBytes: [:], children: [cache])
     }
 
-    func testReclaimRecognizedWhenViewingInsideAReclaimRoot() {
+    func testReclaimPlanListsChildrenWhenViewingInsideAReclaimRoot() {
         let model = ScanModel()
         let root = makeCacheTree()
         model.load(root, rootPath: "/Users/alex")
         model.jump(to: find(root, "uv")!)
 
         XCTAssertEqual(model.current?.name, "uv")
-        XCTAssertEqual(model.reclTotal, find(root, "uv")!.size,
-                       "the whole current folder is reclaimable when inside a reclaim root")
-        XCTAssertEqual(model.reclaimPlan.map(\.name), ["uv"])
+        XCTAssertEqual(model.reclaimPlan.map(\.name), ["archive-v0"],
+                       "the plan offers the current folder's children, not the folder itself")
+        XCTAssertEqual(model.reclTotal, find(root, "archive-v0")!.size)
         XCTAssertEqual(model.reclaimPlan.first?.confidence, .medium,
                        "confidence is inherited from the enclosing .cache root")
+        XCTAssertEqual(model.reclaimPlan.first?.url.path, "/Users/alex/.cache/uv/archive-v0")
+    }
+
+    /// Viewing *at* the reclaim root behaves the same: children, not the root.
+    func testReclaimPlanListsChildrenWhenViewingAtTheReclaimRoot() {
+        let model = ScanModel()
+        let root = makeCacheTree()
+        model.load(root, rootPath: "/Users/alex")
+        model.jump(to: find(root, ".cache")!)
+
+        XCTAssertEqual(model.reclaimPlan.map(\.name), ["uv"])
         XCTAssertEqual(model.reclaimPlan.first?.url.path, "/Users/alex/.cache/uv")
+    }
+
+    /// A childless folder inside a reclaim root still offers itself — there is
+    /// nothing finer-grained to review.
+    func testReclaimPlanFallsBackToCurrentFolderWhenItHasNoChildren() {
+        let model = ScanModel()
+        let root = makeCacheTree()
+        model.load(root, rootPath: "/Users/alex")
+        model.jump(to: find(root, "archive-v0")!)
+
+        XCTAssertEqual(model.reclaimPlan.map(\.name), ["archive-v0"])
+        XCTAssertEqual(model.reclTotal, find(root, "archive-v0")!.size)
+        XCTAssertEqual(model.reclaimPlan.first?.url.path, "/Users/alex/.cache/uv/archive-v0")
     }
 
     /// Clicking a breadcrumb navigates to *that* directory, not its parent.
