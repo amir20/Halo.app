@@ -96,6 +96,13 @@ struct DonutView: View {
         }
         .opacity(dimmed ? 0.32 : 1)
         .allowsHitTesting(false)   // hover & tap are resolved by angle at the donut level
+        // Hit-testing is geometric, which leaves VoiceOver nothing to land on —
+        // expose each slice as its own actionable element.
+        .accessibilityElement()
+        .accessibilityLabel(Text(
+            "\(arc.seg.label), \(formatSize(arc.seg.size)), \(percent(arc.seg.size, of: model.total).clean) percent"))
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { model.tapSegment(arc.seg) }
     }
 
     /// Indeterminate "scanning" indicator: a short blue arc hugging the inside of
@@ -130,10 +137,11 @@ struct DonutView: View {
         let size = scanning ? model.liveBytes : (f?.size ?? model.total)
         let recl = scanning ? 0 : (f?.recl ?? model.reclTotal)
         let subtitle: String = {
+            if let err = model.scanError { return err }
             if scanning { return "scanning… \(model.liveFiles.formatted()) files" }
             if let f { return "\(percent(f.size, of: model.total).clean)% of \(scope)" }
             if model.mode == .type { return "by type · in \(scope)" }
-            return model.path.count == 1 ? "used on Macintosh HD" : "in this folder"
+            return model.path.count == 1 ? "used on \(model.volumeLabel)" : "in this folder"
         }()
 
         return ZStack {
@@ -143,9 +151,11 @@ struct DonutView: View {
             // controls instead.
             Circle().fill(Palette.bg).frame(width: (r0 - 6) * 2, height: (r0 - 6) * 2)
             VStack(spacing: 3) {
-                Text(name.count > 18 ? name.prefix(17) + "…" : name)
+                Text(name)
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(f != nil ? Palette.ink2 : Palette.ink3)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
                 Text(formatSize(size))
                     .font(.system(size: 38, weight: .semibold, design: .monospaced))
                     .foregroundStyle(Palette.ink)

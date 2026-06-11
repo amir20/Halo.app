@@ -58,6 +58,37 @@ final class ScanModelTests: XCTestCase {
                       "no zero-size arcs to hover")
     }
 
+    /// Subtrees that finish while the user is drilled into another one must
+    /// still make it into the root: `applyChild` deliberately skips restitching
+    /// mid-drill, so `finishScan` must always rebuild the root — keeping the
+    /// user's scope — or navigating back would show stale placeholders.
+    func testScanFinishRestitchesRootWhileUserIsDrilledIn() {
+        let model = ScanModel()
+        let pa = DirNode(name: "a", category: .other, isReclaimable: false,
+                         fileBytes: [:], children: [])
+        let pb = DirNode(name: "b", category: .other, isReclaimable: false,
+                         fileBytes: [:], children: [])
+        model.installRoot(DirNode(name: "alex", category: .other, isReclaimable: false,
+                                  fileBytes: [:], children: [pa, pb]))
+
+        // Subtree "a" finishes; the user drills into it while "b" is still walking.
+        model.applyChild(0, DirNode(name: "a", category: .other, isReclaimable: false,
+                                    fileBytes: [.other: 1_000], children: []))
+        model.jump(to: model.root!.children.first { $0.name == "a" }!)
+
+        // Subtree "b" finishes while drilled in (no restitch), then the scan ends.
+        model.applyChild(1, DirNode(name: "b", category: .media, isReclaimable: false,
+                                    fileBytes: [.media: 2_000], children: []))
+        model.finishScan()
+
+        XCTAssertEqual(model.current?.name, "a", "the user's scope is preserved")
+        model.back()
+        XCTAssertEqual(model.current?.size, 3_000,
+                       "the root includes the subtree that finished mid-drill")
+        XCTAssertTrue(model.root!.children.contains { $0.name == "b" && $0.size == 2_000 },
+                      "navigating back shows the completed subtree, not a placeholder")
+    }
+
     /// Hovering a point in the donut must resolve to the arc actually under the
     /// cursor. Reproduces "hovering the biggest section showed the smallest":
     /// the old per-slice `.onHover` let the topmost (smallest) slice's full-frame
@@ -115,6 +146,28 @@ final class ScanModelTests: XCTestCase {
 
         XCTAssertEqual(model.current?.name, "Caches", "tapping a leaf folder drills into it")
         XCTAssertEqual(model.path.count, 2)
+    }
+
+    /// Segment ids must be derived from the node's *path*, not its object
+    /// identity: every streaming restitch rebuilds the tree with fresh nodes,
+    /// and an identity-based id silently invalidated the hovered slice mid-scan.
+    func testSegmentIDsAreStableAcrossTreeRebuilds() {
+        func makeTree() -> DirNode {
+            let nm = DirNode(name: "node_modules", category: .deps,
+                             isReclaimable: true, fileBytes: [.deps: 2 * Self.GB], children: [])
+            let app = DirNode(name: "app", category: .other,
+                              isReclaimable: false, fileBytes: [.code: 1 * Self.GB], children: [nm])
+            return DirNode(name: "alex", category: .other,
+                           isReclaimable: false, fileBytes: [:], children: [app])
+        }
+
+        let model = ScanModel()
+        model.load(makeTree())
+        let before = model.segments.map(\.id)
+
+        model.load(makeTree())   // structurally identical, all-new objects
+        XCTAssertEqual(model.segments.map(\.id), before,
+                       "ids survive a rebuild of the same tree")
     }
 
     /// `jump(to:)` must land on the requested directory, not bounce up to its

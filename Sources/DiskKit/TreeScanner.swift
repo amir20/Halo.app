@@ -4,6 +4,38 @@ import Synchronization
 import Darwin
 #endif
 
+/// Cooperative cancellation handle for a scan. `cancel()` is thread-safe and
+/// idempotent; the scanner registers a handler that wakes and drains its work
+/// queue, so blocked workers exit instead of finishing a huge walk nobody
+/// wants anymore.
+public final class ScanToken: Sendable {
+    private let state = Mutex<(cancelled: Bool, handlers: [@Sendable () -> Void])>((false, []))
+
+    public init() {}
+
+    public var isCancelled: Bool { state.withLock { $0.cancelled } }
+
+    public func cancel() {
+        let fire = state.withLock { s -> [@Sendable () -> Void] in
+            guard !s.cancelled else { return [] }
+            s.cancelled = true
+            defer { s.handlers = [] }
+            return s.handlers
+        }
+        for h in fire { h() }
+    }
+
+    /// Registers `handler` to run on `cancel()` — immediately if already cancelled.
+    func onCancel(_ handler: @escaping @Sendable () -> Void) {
+        let fireNow = state.withLock { s -> Bool in
+            if s.cancelled { return true }
+            s.handlers.append(handler)
+            return false
+        }
+        if fireNow { handler() }
+    }
+}
+
 /// Builds a classified `DirNode` tree from a real filesystem path using raw
 /// POSIX directory calls. Symlinks are not followed; unreadable directories are
 /// skipped. Sizes are disk usage (allocated blocks).
@@ -12,8 +44,8 @@ import Darwin
 /// "one thread per top-level directory, each subtree walked serially" scheme
 /// (which left every core but one idle whenever a single subtree — `~/Library`,
 /// a giant `node_modules` — dominated), all worker threads pull directories
-/// from a shared work-stealing `NodeQueue`. Load stays balanced regardless of
-/// tree shape, so a lopsided home folder no longer bottlenecks the scan.
+/// from one shared `NodeQueue`. Load stays balanced regardless of tree shape,
+/// so a lopsided home folder no longer bottlenecks the scan.
 public enum TreeScanner {
 
     /// Blocking, build-the-whole-tree scan. Convenient for tests; the GUI uses
@@ -21,7 +53,7 @@ public enum TreeScanner {
     public static func scan(_ rootPath: String, progress: ScanProgress = ScanProgress()) -> DirNode {
         let rootName = (rootPath as NSString).lastPathComponent
         let root = BuildNode(name: rootName, path: rootPath, inherited: nil, hint: .none)
-        drain(NodeQueue([root]), progress: progress)
+        drain(NodeQueue([root]), context: ScanContext(progress: progress, rootPath: rootPath))
         return freeze(root)
     }
 
@@ -31,19 +63,22 @@ public enum TreeScanner {
     /// and everything beneath it — is finished, in any order. `progress` ticks
     /// the whole time so the caller can show a live counter. All callbacks fire
     /// on scanner threads — the caller is responsible for hopping to the main
-    /// actor.
+    /// actor. Cancelling `token` drains the queue: workers exit early, subtrees
+    /// stop completing, and `onDone` still fires.
     public static func scanStreaming(
         _ rootPath: String,
         progress: ScanProgress,
+        token: ScanToken? = nil,
         onRoot: @Sendable (DirNode) -> Void,
         onChild: @Sendable (Int, DirNode) -> Void,
         onDone: @Sendable () -> Void
     ) {
         let rootName = (rootPath as NSString).lastPathComponent
         let root = BuildNode(name: rootName, path: rootPath, inherited: nil, hint: .none)
+        let context = ScanContext(progress: progress, rootPath: rootPath)
         // List the root directory synchronously so we can paint placeholders for
         // every top-level subtree before the heavy walk begins.
-        list(root, progress: progress)
+        list(root, context: context)
 
         let tops = root.children
         for (i, t) in tops.enumerated() { t.rootIndex = i }
@@ -70,9 +105,10 @@ public enum TreeScanner {
             for t in tops { tracker.enter(t.rootIndex) }   // the top node itself
 
             let queue = NodeQueue(tops)
+            token?.onCancel { queue.cancel() }
             DispatchQueue.concurrentPerform(iterations: workerCount) { _ in
                 while let node = queue.pop() {
-                    list(node, progress: progress)
+                    list(node, context: context)
                     let idx = node.rootIndex
                     for c in node.children { c.rootIndex = idx }
                     tracker.enter(idx, count: node.children.count)  // children, before…
@@ -90,10 +126,10 @@ public enum TreeScanner {
     }
 
     /// Runs every node in `queue` through `list` using the shared worker pool.
-    private static func drain(_ queue: NodeQueue, progress: ScanProgress) {
+    private static func drain(_ queue: NodeQueue, context: ScanContext) {
         DispatchQueue.concurrentPerform(iterations: workerCount) { _ in
             while let node = queue.pop() {
-                list(node, progress: progress)
+                list(node, context: context)
                 queue.push(node.children)
                 queue.finishOne()
             }
@@ -112,7 +148,7 @@ public enum TreeScanner {
     /// (manifests sit next to the dir they regenerate). The parent supplied the
     /// sibling-manifest `hint` when it created this node; we combine that with the
     /// name and any `CACHEDIR.TAG` seen here.
-    private static func list(_ node: BuildNode, progress: ScanProgress) {
+    private static func list(_ node: BuildNode, context: ScanContext) {
         // The override (if any) is known before reading contents — from a
         // reclaimable ancestor, a parent manifest hint, or the name. When set,
         // every file rolls up to it, so per-file categorization is skipped (the
@@ -123,7 +159,9 @@ public enum TreeScanner {
         let parentName = ((node.path as NSString).deletingLastPathComponent as NSString).lastPathComponent
 
         guard let dirp = opendir(node.path) else {
-            // Unreadable: classify from name/hint alone (no contents, no marker).
+            // Unreadable: classify from name/hint alone (no contents, no marker),
+            // and count the skip so the UI can disclose the blind spot.
+            context.progress.addSkippedDir()
             apply(Classifier.classify(name: node.name, inherited: node.inherited,
                                       hint: node.hint, hasCachedirTag: false,
                                       parent: parentName), to: node)
@@ -146,16 +184,24 @@ public enum TreeScanner {
             if full.withCString({ lstat($0, &st) }) != 0 { continue }
             let fmt = UInt32(st.st_mode) & UInt32(S_IFMT)
             if fmt == UInt32(S_IFDIR) {
-                dirEnts.append((name, full))
+                // Stay on the scan root's filesystem: a dir on another device is
+                // a mount point (or firmlink) — descending would count another
+                // volume's contents as this folder's usage.
+                if st.st_dev == context.rootDev { dirEnts.append((name, full)) }
             } else if fmt == UInt32(S_IFREG) {
-                let bytes = Int64(st.st_blocks) * 512
-                byteSum += bytes
-                fileCount += 1
-                // Only categorize per-extension when nothing overrides this dir;
-                // an override (or a late CACHEDIR.TAG) rolls every file into one
-                // bucket below.
-                if earlyOverride == nil {
-                    perExt[Classifier.classifyFile(ext: fileExt(name)), default: 0] += bytes
+                // A hard-linked inode counts once, the way `du` does; later
+                // sightings still register as siblings (for manifest hints), they
+                // just contribute no bytes.
+                if st.st_nlink <= 1 || context.firstSighting(of: st.st_ino) {
+                    let bytes = Int64(st.st_blocks) * 512
+                    byteSum += bytes
+                    fileCount += 1
+                    // Only categorize per-extension when nothing overrides this
+                    // dir; an override (or a late CACHEDIR.TAG) rolls every file
+                    // into one bucket below.
+                    if earlyOverride == nil {
+                        perExt[Classifier.classifyFile(ext: fileExt(name)), default: 0] += bytes
+                    }
                 }
                 siblings.insert(name.lowercased())
                 if name == "CACHEDIR.TAG", validCachedirTag(full) { hasCachedirTag = true }
@@ -182,7 +228,7 @@ public enum TreeScanner {
                       inherited: node.filesAs, hint: childHint(ent.name))
         }
 
-        progress.add(files: fileCount, bytes: byteSum)
+        context.progress.add(files: fileCount, bytes: byteSum)
     }
 
     private static func apply(_ dc: Classifier.DirClass, to node: BuildNode) {
@@ -222,6 +268,28 @@ public enum TreeScanner {
                 String(cString: $0)
             }
         }
+    }
+}
+
+/// Per-scan shared state: the live progress counters, the scan root's device
+/// (the walk never crosses onto another filesystem, so mount points and
+/// firmlinks aren't counted as local usage), and the set of multi-link inodes
+/// already counted (hard links count once, like `du`). Inode numbers alone are
+/// a sufficient key because every counted file is on `rootDev`.
+private final class ScanContext: Sendable {
+    let progress: ScanProgress
+    let rootDev: dev_t
+    private let seenInodes = Mutex<Set<ino_t>>([])
+
+    init(progress: ScanProgress, rootPath: String) {
+        self.progress = progress
+        var st = stat()
+        self.rootDev = rootPath.withCString { stat($0, &st) } == 0 ? st.st_dev : 0
+    }
+
+    /// True the first time this inode is seen in the scan — count it then only.
+    func firstSighting(of ino: ino_t) -> Bool {
+        seenInodes.withLock { $0.insert(ino).inserted }
     }
 }
 
@@ -265,16 +333,19 @@ private final class BuildNode: @unchecked Sendable {
     }
 }
 
-/// Shared work-stealing stack of directory nodes still to be listed — the same
-/// design as duaswift's `DirectoryQueue`, but carrying `BuildNode`s so workers
-/// fill the tree as they go instead of only summing. `pending` counts nodes
-/// enqueued-but-not-yet-finished so idle workers know when the scan is done.
-/// `@unchecked Sendable`: the `NSCondition` serializes every access to `stack`
-/// and `pending`. Pops are LIFO, so traversal is depth-first.
+/// Shared stack of directory nodes still to be listed (a single lock-guarded
+/// queue, not per-worker stealing deques — ample for an IO-bound walk) — the
+/// same design as duaswift's `DirectoryQueue`, but carrying `BuildNode`s so
+/// workers fill the tree as they go instead of only summing. `pending` counts
+/// nodes enqueued-but-not-yet-finished so idle workers know when the scan is
+/// done. `@unchecked Sendable`: the `NSCondition` serializes every access to
+/// `stack`, `pending`, and `cancelled`. Pops are LIFO, so traversal is
+/// depth-first.
 private final class NodeQueue: @unchecked Sendable {
     private let cond = NSCondition()
     private var stack: [BuildNode]
     private var pending: Int
+    private var cancelled = false
 
     init(_ roots: [BuildNode]) {
         stack = roots
@@ -282,16 +353,25 @@ private final class NodeQueue: @unchecked Sendable {
     }
 
     /// Blocks until a node is available, or returns `nil` once the scan is
-    /// finished (stack empty AND nothing pending). Wakes peers so they exit too.
+    /// finished (stack empty AND nothing pending) or cancelled. Wakes peers so
+    /// they exit too.
     func pop() -> BuildNode? {
         cond.lock()
         defer { cond.unlock() }
-        while stack.isEmpty && pending > 0 { cond.wait() }
-        if stack.isEmpty {           // pending == 0 → everything is done
-            cond.broadcast()         // wake the other idle workers to exit
+        while stack.isEmpty && pending > 0 && !cancelled { cond.wait() }
+        if cancelled || stack.isEmpty {   // cancelled, or pending == 0 → done
+            cond.broadcast()              // wake the other idle workers to exit
             return nil
         }
         return stack.removeLast()
+    }
+
+    /// Stops the scan: every `pop` — blocked or future — returns `nil`.
+    func cancel() {
+        cond.lock()
+        cancelled = true
+        cond.broadcast()
+        cond.unlock()
     }
 
     /// Adds discovered sub-directories and bumps the pending count.

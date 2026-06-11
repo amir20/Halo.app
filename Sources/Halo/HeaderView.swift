@@ -14,10 +14,34 @@ struct HeaderView: View {
             .buttonStyle(.glass)
             .disabled(model.path.count <= 1)
             .opacity(model.path.count <= 1 ? 0.36 : 1)
+            .keyboardShortcut(.upArrow, modifiers: .command)
+            .help("Back to the enclosing folder (⌘↑)")
 
             crumbs
 
             Spacer(minLength: 12)
+
+            Button(action: model.rescan) {
+                Image(systemName: "arrow.clockwise")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Palette.ink2)
+                    .frame(width: 28, height: 28)
+            }
+            .buttonStyle(.glass)
+            .disabled(model.scanning)
+            .opacity(model.scanning ? 0.36 : 1)
+            .keyboardShortcut("r", modifiers: .command)
+            .help("Scan again (⌘R)")
+
+            Button(action: model.chooseFolder) {
+                Image(systemName: "folder.badge.plus")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Palette.ink2)
+                    .frame(width: 28, height: 28)
+            }
+            .buttonStyle(.glass)
+            .keyboardShortcut("o", modifiers: .command)
+            .help("Choose a folder to scan (⌘O)")
 
             Button(action: model.openInFinder) {
                 Label("Open in Finder", systemImage: "folder")
@@ -45,7 +69,8 @@ struct HeaderView: View {
                     .font(.system(size: 13, weight: last ? .semibold : .medium,
                                   design: i > 0 ? .monospaced : .default))
                     .foregroundStyle(last ? Palette.ink : Palette.ink3)
-                    .onTapGesture { if !last && i > 0 { model.goTo(crumb: i) } }
+                    // goTo ignores the decorative volume crumb itself.
+                    .onTapGesture { if !last { model.goTo(crumb: i) } }
                 if !last {
                     Text("›").font(.system(size: 12)).foregroundStyle(Palette.ink4)
                 }

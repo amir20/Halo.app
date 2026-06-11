@@ -123,17 +123,56 @@ final class ScanModelReclaimTests: XCTestCase {
         XCTAssertEqual(model.reclaimPlan.first?.url.path, "/Users/alex/.cache/uv/archive-v0")
     }
 
+    /// A finished reclaim prunes the trashed subtrees out of the local tree —
+    /// sizes shrink immediately, the scope is preserved, and no rescan starts.
+    func testReclaimPrunesTreeLocallyWithoutRescan() {
+        let model = ScanModel()
+        let root = makeTree()
+        model.load(root, rootPath: "/Users/alex")
+        model.jump(to: find(root, "app")!)
+        let sizeBefore = model.root!.size
+        let nm = find(root, "node_modules")!
+
+        model.applyReclaimResult(trashedIDs: [nm.id],
+                                 outcome: ReclaimOutcome(trashed: 1, failed: 0))
+
+        XCTAssertFalse(model.scanning, "pruning must not start a rescan")
+        XCTAssertEqual(model.current?.name, "app", "the user stays where they were")
+        XCTAssertEqual(model.root?.size, sizeBefore - nm.size, "sizes shrink immediately")
+        XCTAssertFalse(model.reclaimPlan.contains { $0.name == "node_modules" },
+                       "the trashed target is no longer offered")
+        XCTAssertEqual(model.lastReclaim?.trashed, 1)
+    }
+
+    /// Trashing the very folder being viewed must not strand the model inside a
+    /// pruned-away node: the path re-resolves to the nearest surviving ancestor.
+    func testReclaimOfCurrentFolderClimbsToSurvivingAncestor() {
+        let model = ScanModel()
+        let root = makeTree()
+        model.load(root, rootPath: "/Users/alex")
+        let nm = find(root, "node_modules")!
+        model.jump(to: nm)
+
+        model.applyReclaimResult(trashedIDs: [nm.id],
+                                 outcome: ReclaimOutcome(trashed: 1, failed: 0))
+
+        XCTAssertEqual(model.current?.name, "app", "lands on the surviving parent")
+    }
+
     /// Clicking a breadcrumb navigates to *that* directory, not its parent.
-    /// crumbs = ["Macintosh HD", "~", "Library", "Caches"]; crumb 2 is "Library".
+    /// An in-memory tree has no volume, so the crumbs are just the path —
+    /// no hardcoded "Macintosh HD" (which was wrong for any non-boot volume).
     func testGoToCrumbLandsOnThatDirectory() {
         let model = ScanModel()
         let root = makeTree()
         model.load(root, rootPath: "/Users/alex")
         model.jump(to: find(root, "Caches")!)   // path: alex / Library / Caches
-        model.goTo(crumb: 2)
-        XCTAssertEqual(model.current?.name, "Library", "crumb 2 is Library, not its parent")
+        XCTAssertEqual(model.crumbs, ["~", "Library", "Caches"],
+                       "no fabricated volume crumb for an in-memory tree")
         model.goTo(crumb: 1)
-        XCTAssertEqual(model.current?.name, "alex", "crumb 1 is the home root")
+        XCTAssertEqual(model.current?.name, "Library", "crumb 1 is Library")
+        model.goTo(crumb: 0)
+        XCTAssertEqual(model.current?.name, "alex", "crumb 0 is the root")
     }
 }
 
