@@ -20,11 +20,15 @@
   <meta property="og:description" content={DESC} />
   <meta property="og:url" content="https://halodisk.app/" />
   <meta property="og:image" content="https://halodisk.app/og.png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="Halo — a disk-space visualizer for macOS" />
 
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content={TITLE} />
   <meta name="twitter:description" content={DESC} />
   <meta name="twitter:image" content="https://halodisk.app/og.png" />
+  <meta name="twitter:image:alt" content="Halo — a disk-space visualizer for macOS" />
 </svelte:head>
 
 <Nav />
