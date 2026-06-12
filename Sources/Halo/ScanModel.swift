@@ -483,13 +483,28 @@ final class ScanModel {
     /// Re-probe Full Disk Access — called when the app reactivates, e.g. after
     /// the user visits System Settings to grant it. On a denied→granted
     /// transition, rescan so the dirs the walk had to skip fill in.
+    ///
+    /// The probe (`open()`) runs on a background thread so the main actor is
+    /// never blocked. The animation for the banner fade-out is applied here,
+    /// after the probe completes, so the caller doesn't need a `withAnimation`
+    /// wrapper. The rescan is deferred past the animation transaction via `Task`
+    /// so scan-state resets (`scanning = true`, `showRing = false`, …) aren't
+    /// caught by the easeOut curve.
     func refreshFullDiskAccess() {
-        let granted = FullDiskAccess.isGranted
         let wasDenied = !fullDiskAccess
-        fullDiskAccess = granted
-        if granted && wasDenied {
-            fdaBannerDismissed = false
-            if !scanRootPath.isEmpty { rescan() }
+        Task.detached(priority: .utility) {
+            let granted = FullDiskAccess.isGranted
+            await MainActor.run {
+                withAnimation(.easeOut(duration: 0.25)) {
+                    self.fullDiskAccess = granted
+                }
+                if granted && wasDenied {
+                    self.fdaBannerDismissed = false
+                    if !self.scanRootPath.isEmpty {
+                        Task { self.rescan() }
+                    }
+                }
+            }
         }
     }
 

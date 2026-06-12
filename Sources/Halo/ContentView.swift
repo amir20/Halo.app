@@ -24,7 +24,7 @@ struct ContentView: View {
         .onReceive(
             NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
         ) { _ in
-            withAnimation(.easeOut(duration: 0.25)) { model.refreshFullDiskAccess() }
+            model.refreshFullDiskAccess()
         }
     }
 
