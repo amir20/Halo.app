@@ -64,6 +64,9 @@ struct ReclaimItem: Identifiable {
     let reason: String
     /// Whether it starts checked — high-confidence targets do.
     let preselected: Bool
+    /// True when the target is already in the Trash, so reclaiming it means a
+    /// permanent delete (`removeItem`) — `trashItem` can't move trash to trash.
+    let permanentDelete: Bool
 }
 
 @MainActor
@@ -551,7 +554,8 @@ final class ScanModel {
                 url: absoluteURL(for: node), size: node.size,
                 confidence: mark.confidence,
                 signalLabel: Self.signalLabel(mark.signal, category: node.category),
-                reason: mark.reason, preselected: mark.confidence == .high)
+                reason: mark.reason, preselected: mark.confidence == .high,
+                permanentDelete: node.category == .trash)
         }.sorted { $0.size > $1.size }
     }
 
@@ -574,12 +578,17 @@ final class ScanModel {
         guard !items.isEmpty else { return }
         showReclaimSheet = false
         Task.detached(priority: .userInitiated) {
-            let result = Reclaimer.moveToTrash(items.map(\.url))
-            let trashedURLs = Set(result.trashed)
-            let ids = Set(items.filter { trashedURLs.contains($0.url) }.map(\.id))
+            // Items already in the Trash can't be moved to the Trash — they're
+            // permanently removed instead. Everything else moves to the Trash.
+            let toTrash = items.filter { !$0.permanentDelete }
+            let toDelete = items.filter(\.permanentDelete)
+            let trashResult = Reclaimer.moveToTrash(toTrash.map(\.url))
+            let deleteResult = Reclaimer.delete(toDelete.map(\.url))
+            let goneURLs = Set(trashResult.trashed).union(deleteResult.removed)
+            let ids = Set(items.filter { goneURLs.contains($0.url) }.map(\.id))
             let outcome = ReclaimOutcome(
-                trashed: result.trashed.count,
-                failed: result.failed.count)
+                trashed: trashResult.trashed.count + deleteResult.removed.count,
+                failed: trashResult.failed.count + deleteResult.failed.count)
             await MainActor.run { self.applyReclaimResult(trashedIDs: ids, outcome: outcome) }
         }
     }
