@@ -137,6 +137,9 @@ struct RailView: View {
                 .foregroundStyle(.white)
                 .frame(maxWidth: .infinity).frame(height: 40)
                 .glassEffect(.regular.tint(Palette.reclaim), in: .rect(cornerRadius: 10))
+                // .plain buttons only hit-test opaque label content, and the glass
+                // background doesn't count — without this, only the icon/text is clickable.
+                .contentShape(.rect(cornerRadius: 10))
             }
             .buttonStyle(.plain)
             .disabled(!enabled)
