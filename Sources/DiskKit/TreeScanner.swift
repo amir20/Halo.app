@@ -316,8 +316,12 @@ private final class ScanContext: Sendable {
         // the caller when the walk finishes.
         var fs = statfs()
         if rootPath.withCString({ statfs($0, &fs) }) == 0 {
+            // Subtract in signed space: f_blocks/f_bfree are UInt64, so an
+            // inconsistent statfs (f_bfree > f_blocks, seen on some network
+            // filesystems) would wrap and then trap in Int64(). The inode line
+            // is already safe for the same reason.
             let usedInodes = Int64(fs.f_files) - Int64(fs.f_ffree)
-            let usedBytes = Int64(fs.f_blocks - fs.f_bfree) * Int64(fs.f_bsize)
+            let usedBytes = (Int64(fs.f_blocks) - Int64(fs.f_bfree)) * Int64(fs.f_bsize)
             progress.setDenominator(entries: max(0, usedInodes), bytes: max(0, usedBytes))
         }
     }
