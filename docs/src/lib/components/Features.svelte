@@ -39,22 +39,22 @@
       </div>
 
       <div use:reveal={{ delay: 160 }}>
-        <GlassCard title="Reclaim space" accent={folderHue(1)}>
-          {#snippet icon()}
-            <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M12 3v10m0 0 4-4m-4 4-4-4M4 17c2.5 2.7 13.5 2.7 16 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          {/snippet}
-          Halo spots regenerable space — caches, node_modules, DerivedData — and
-          reclaims it in one click, safely into the Trash.
-        </GlassCard>
-      </div>
-
-      <div use:reveal={{ delay: 240 }}>
         <GlassCard title="Native &amp; private" accent={folderHue(5)}>
           {#snippet icon()}
             <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M12 2 4 6v6c0 5 3.5 8.5 8 10 4.5-1.5 8-5 8-10V6l-8-4z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
           {/snippet}
           Pure SwiftUI, built for macOS 26. No telemetry, no accounts — your scan
           never leaves your Mac.
+        </GlassCard>
+      </div>
+
+      <div use:reveal={{ delay: 240 }}>
+        <GlassCard title="Reclaim space" accent={folderHue(1)}>
+          {#snippet icon()}
+            <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M12 3v10m0 0 4-4m-4 4-4-4M4 17c2.5 2.7 13.5 2.7 16 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          {/snippet}
+          Halo spots regenerable space — caches, node_modules, DerivedData — and
+          reclaims it in one click, safely into the Trash.
         </GlassCard>
       </div>
     </div>
@@ -131,14 +131,38 @@
     margin: 12px 0 48px;
   }
 
+  /* Zigzag: a wide card leads each row (2+1, then 1+2) so the grid reads as
+     composed, not a template of four identical tiles. */
   .grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    grid-template-columns: repeat(3, 1fr);
     gap: 20px;
   }
 
   .grid > div {
     display: grid;
+  }
+
+  .grid > div:nth-child(1),
+  .grid > div:nth-child(4) {
+    grid-column: span 2;
+  }
+
+  @media (max-width: 880px) {
+    .grid {
+      grid-template-columns: 1fr 1fr;
+    }
+  }
+
+  @media (max-width: 600px) {
+    .grid {
+      grid-template-columns: 1fr;
+    }
+
+    .grid > div:nth-child(1),
+    .grid > div:nth-child(4) {
+      grid-column: auto;
+    }
   }
 
   em {

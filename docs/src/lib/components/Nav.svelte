@@ -68,19 +68,27 @@
     opacity: 0;
     transform: translate(-50%, -12px);
     pointer-events: none;
+    /* visibility keeps the hidden pill out of the tab order; its transition is
+       delayed so it only flips off after the fade-out finishes. */
+    visibility: hidden;
     transition:
       opacity var(--dur-3) var(--ease-out-quart),
-      transform var(--dur-3) var(--ease-out-quart);
+      transform var(--dur-3) var(--ease-out-quart),
+      visibility 0s linear var(--dur-3);
   }
 
   .pill.visible {
     opacity: 1;
     transform: translate(-50%, 0);
     pointer-events: auto;
+    visibility: visible;
+    transition:
+      opacity var(--dur-3) var(--ease-out-quart),
+      transform var(--dur-3) var(--ease-out-quart);
   }
 
   .pill a {
-    padding: 8px 14px;
+    padding: 10px 14px;
     border-radius: 999px;
     font-size: 14px;
     font-weight: 500;
@@ -102,8 +110,8 @@
   .toggle {
     display: inline-grid;
     place-items: center;
-    width: 34px;
-    height: 34px;
+    width: 38px;
+    height: 38px;
     padding: 0;
     border: 0;
     border-radius: 999px;

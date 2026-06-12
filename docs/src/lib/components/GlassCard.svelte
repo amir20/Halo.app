@@ -10,20 +10,20 @@
 </script>
 
 <div class="card glass">
-  <div class="icon" style:color={accent} style:--accent={accent}>
-    {@render icon()}
-  </div>
-  <h3>{title}</h3>
+  <h3>
+    <span class="icon" style:color={accent} aria-hidden="true">{@render icon()}</span>
+    {title}
+  </h3>
   <p>{@render children()}</p>
 </div>
 
 <style>
   .card {
     border-radius: var(--radius);
-    padding: 28px;
+    padding: 26px 28px;
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 10px;
     transition: transform var(--dur-3) var(--ease-out-quart);
   }
 
@@ -33,21 +33,23 @@
     }
   }
 
-  .icon {
-    width: 44px;
-    height: 44px;
-    display: grid;
-    place-items: center;
-    border-radius: 12px;
-    background: color-mix(in oklch, var(--accent) 14%, transparent);
-    box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--accent) 25%, transparent);
-  }
-
   h3 {
+    display: flex;
+    align-items: center;
+    gap: 10px;
     font-size: 19px;
     font-weight: 600;
     letter-spacing: -0.01em;
     color: var(--ink);
+  }
+
+  .icon {
+    display: inline-grid;
+    place-items: center;
+  }
+
+  .icon :global(svg) {
+    display: block;
   }
 
   p {
@@ -55,5 +57,6 @@
     font-weight: 300;
     line-height: 1.55;
     color: var(--ink2);
+    max-width: 52ch;
   }
 </style>

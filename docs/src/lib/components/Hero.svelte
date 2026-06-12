@@ -7,7 +7,7 @@
 <section class="hero" id="top">
   <div class="content">
     <p class="wordmark">Halo</p>
-    <h1>See what's eating<br />your disk.</h1>
+    <h1>See what’s eating<br />your disk.</h1>
     <p class="sub">A beautiful, blazing-fast disk-space visualizer for macOS.</p>
 
     <Donut />
@@ -101,6 +101,8 @@
     text-transform: uppercase;
     color: var(--reclaim);
     margin-bottom: -8px;
+    /* Recenter optically: tracking adds 0.32em of dead space after the O. */
+    padding-left: 0.32em;
   }
 
   h1 {
@@ -165,9 +167,13 @@
 
   .chevron {
     position: absolute;
-    bottom: 28px;
+    bottom: 18px;
     left: 50%;
     translate: -50% 0;
+    display: grid;
+    place-items: center;
+    padding: 11px;
+    border-radius: 999px;
     color: var(--ink4);
     animation:
       rise 900ms var(--ease-out-quint) 2000ms both,
