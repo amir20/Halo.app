@@ -16,6 +16,13 @@ struct RailView: View {
             .padding(.horizontal, 18)
             .padding(.top, 16).padding(.bottom, 8)
 
+            // Plain-language overview of the current scope. Only meaningful once a
+            // scan has produced segments to describe; it generates itself.
+            if !model.scanning && !model.segments.isEmpty {
+                SummaryCard(model: model)
+                    .animation(.easeInOut(duration: 0.3), value: model.summaryState)
+            }
+
             ScrollView {
                 LazyVStack(spacing: 1) {
                     ForEach(model.segments) { seg in
