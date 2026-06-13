@@ -161,7 +161,7 @@ final class ScanModelReclaimTests: XCTestCase {
 
         model.applyReclaimResult(
             trashedIDs: [nm.id],
-            outcome: ReclaimOutcome(trashed: 1, failed: 0))
+            outcome: ReclaimOutcome(trashed: 1, deleted: 0, failed: 0))
 
         XCTAssertFalse(model.scanning, "pruning must not start a rescan")
         XCTAssertEqual(model.current?.name, "app", "the user stays where they were")
@@ -183,9 +183,33 @@ final class ScanModelReclaimTests: XCTestCase {
 
         model.applyReclaimResult(
             trashedIDs: [nm.id],
-            outcome: ReclaimOutcome(trashed: 1, failed: 0))
+            outcome: ReclaimOutcome(trashed: 1, deleted: 0, failed: 0))
 
         XCTAssertEqual(model.current?.name, "app", "lands on the surviving parent")
+    }
+
+    /// A target already in the Trash is flagged `permanentDelete` — it can't be
+    /// moved to the Trash, so reclaiming it removes it outright. Everything else
+    /// stays a move-to-trash.
+    func testTrashTargetsArePermanentDelete() {
+        let trash = DirNode(
+            name: ".Trash", category: .trash,
+            reclaim: ReclaimMark(
+                confidence: .high, signal: .knownName, reason: "known trash directory"),
+            fileBytes: [.trash: 4 * GB], children: [])
+        let root = DirNode(
+            name: "alex", category: .other, reclaim: nil, fileBytes: [:],
+            children: [trash, makeTree().children[1]])  // .Trash + Projects subtree
+        let model = ScanModel()
+        model.load(root, rootPath: "/Users/alex")
+
+        let plan = model.reclaimPlan
+        XCTAssertEqual(
+            plan.first(where: { $0.name == ".Trash" })?.permanentDelete, true,
+            "trash is deleted permanently, not moved to itself")
+        XCTAssertEqual(
+            plan.first(where: { $0.name == "node_modules" })?.permanentDelete, false,
+            "a normal reclaim target still moves to the Trash")
     }
 
     /// Clicking a breadcrumb navigates to *that* directory, not its parent.

@@ -24,6 +24,9 @@ struct ReclaimSheet: View {
 
     private var chosen: [ReclaimItem] { plan.filter { selected.contains($0.id) } }
     private var total: Int64 { chosen.reduce(0) { $0 + $1.size } }
+    /// True when any chosen target is already in the Trash, so confirming will
+    /// permanently delete it rather than move it to the Trash.
+    private var hasPermanentDelete: Bool { chosen.contains(where: \.permanentDelete) }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -42,9 +45,13 @@ struct ReclaimSheet: View {
             Text("Move to Trash?")
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(Palette.ink)
-            Text("Review what Halo will move to the Trash. Everything is recoverable.")
-                .font(.system(size: 12))
-                .foregroundStyle(Palette.ink3)
+            Text(
+                hasPermanentDelete
+                    ? "Review what Halo will remove. Items already in the Trash are deleted permanently."
+                    : "Review what Halo will move to the Trash. Everything is recoverable."
+            )
+            .font(.system(size: 12))
+            .foregroundStyle(Palette.ink3)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 20).padding(.top, 18).padding(.bottom, 14)
@@ -115,8 +122,11 @@ struct ReclaimSheet: View {
             Button {
                 onConfirm(chosen)
             } label: {
-                Label("Move to Trash", systemImage: "trash")
-                    .font(.system(size: 13, weight: .semibold))
+                Label(
+                    hasPermanentDelete ? "Remove" : "Move to Trash",
+                    systemImage: "trash"
+                )
+                .font(.system(size: 13, weight: .semibold))
             }
             .buttonStyle(.glassProminent)
             .tint(Palette.reclaim)

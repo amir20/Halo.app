@@ -20,4 +20,23 @@ enum Reclaimer {
         }
         return (trashed, failed)
     }
+
+    /// Permanently remove each URL, continuing past failures. Used for items that
+    /// are *already* in the Trash (`~/.Trash` and its contents): `trashItem`
+    /// can't move trash into the trash, so the only way to reclaim that space is
+    /// to delete it outright. Mirrors `moveToTrash`'s partial-result shape so the
+    /// caller can fold both batches into one outcome.
+    static func delete(_ urls: [URL]) -> (removed: [URL], failed: [(url: URL, error: Error)]) {
+        var removed: [URL] = []
+        var failed: [(url: URL, error: Error)] = []
+        for url in urls {
+            do {
+                try FileManager.default.removeItem(at: url)
+                removed.append(url)
+            } catch {
+                failed.append((url, error))
+            }
+        }
+        return (removed, failed)
+    }
 }
