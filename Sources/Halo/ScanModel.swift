@@ -45,9 +45,12 @@ enum ScanEvent: Sendable {
     case done
 }
 
-/// Summary of a completed reclaim, for a brief confirmation note.
+/// Summary of a completed reclaim, for a brief confirmation note. `trashed` and
+/// `deleted` are kept apart because items already in the Trash are removed
+/// permanently (not moved), so the note can say so honestly.
 struct ReclaimOutcome {
     let trashed: Int
+    let deleted: Int
     let failed: Int
 }
 
@@ -64,6 +67,9 @@ struct ReclaimItem: Identifiable {
     let reason: String
     /// Whether it starts checked — high-confidence targets do.
     let preselected: Bool
+    /// True when the target is already in the Trash, so reclaiming it means a
+    /// permanent delete (`removeItem`) — `trashItem` can't move trash to trash.
+    let permanentDelete: Bool
 }
 
 @MainActor
@@ -101,6 +107,18 @@ final class ScanModel {
     /// so this is an estimate (see `ScanProgress.fractionDone`) — but it only ever
     /// moves forward.
     private(set) var scanFraction: Double = 0
+    /// State of the auto-generated overview for the current scope. Reset whenever
+    /// the scope changes (in `refresh()`), so a stale summary never lingers over
+    /// a different folder. Generation is kicked off automatically — there is no
+    /// user-facing control for it.
+    private(set) var summaryState: SummaryState = .idle
+    /// Bumped on every scope change; lets an in-flight summary request detect
+    /// that its scope is gone and drop its result instead of overwriting a newer
+    /// one (or a folder it no longer describes).
+    private var summaryEpoch = 0
+    /// The in-flight summary request, cancelled when a newer scope supersedes it
+    /// so rapid drill-through never piles up concurrent on-device inferences.
+    private var summaryTask: Task<Void, Never>?
     /// Drives the reclaim confirmation sheet.
     var showReclaimSheet = false
     /// Result of the most recent reclaim, for a brief footer note.
@@ -378,6 +396,16 @@ final class ScanModel {
             reclaimTargets = current.map(Derive.reclaimRoots) ?? []
         }
         refreshExpandedLocations()
+        // The scope changed, so any summary now describes a stale folder. Drop it,
+        // invalidate any in-flight request (see `summaryEpoch`), then auto-generate
+        // a fresh overview for the new scope — no user action required. Skipped
+        // while a scan is still streaming (the picture isn't settled yet) and when
+        // there's nothing to describe.
+        summaryState = .idle
+        summaryEpoch += 1
+        if !scanning, !segments.isEmpty {
+            generateSummary()
+        }
     }
 
     /// Recomputes only the expanded-type drill-down rows. Cheaper than a full
@@ -551,7 +579,8 @@ final class ScanModel {
                 url: absoluteURL(for: node), size: node.size,
                 confidence: mark.confidence,
                 signalLabel: Self.signalLabel(mark.signal, category: node.category),
-                reason: mark.reason, preselected: mark.confidence == .high)
+                reason: mark.reason, preselected: mark.confidence == .high,
+                permanentDelete: node.category == .trash)
         }.sorted { $0.size > $1.size }
     }
 
@@ -574,12 +603,18 @@ final class ScanModel {
         guard !items.isEmpty else { return }
         showReclaimSheet = false
         Task.detached(priority: .userInitiated) {
-            let result = Reclaimer.moveToTrash(items.map(\.url))
-            let trashedURLs = Set(result.trashed)
-            let ids = Set(items.filter { trashedURLs.contains($0.url) }.map(\.id))
+            // Items already in the Trash can't be moved to the Trash — they're
+            // permanently removed instead. Everything else moves to the Trash.
+            let toTrash = items.filter { !$0.permanentDelete }
+            let toDelete = items.filter(\.permanentDelete)
+            let trashResult = Reclaimer.moveToTrash(toTrash.map(\.url))
+            let deleteResult = Reclaimer.delete(toDelete.map(\.url))
+            let goneURLs = Set(trashResult.trashed).union(deleteResult.removed)
+            let ids = Set(items.filter { goneURLs.contains($0.url) }.map(\.id))
             let outcome = ReclaimOutcome(
-                trashed: result.trashed.count,
-                failed: result.failed.count)
+                trashed: trashResult.trashed.count,
+                deleted: deleteResult.removed.count,
+                failed: trashResult.failed.count + deleteResult.failed.count)
             await MainActor.run { self.applyReclaimResult(trashedIDs: ids, outcome: outcome) }
         }
     }
@@ -632,6 +667,60 @@ final class ScanModel {
         case .cachedirTag: return "CACHEDIR.TAG"
         case .manifest(let m): return m
         case .knownName: return category.label
+        }
+    }
+
+    // MARK: - Summary
+
+    /// A compact, model-readable description of the current scope: the largest
+    /// items (in whichever lens is active), their share, and what's reclaimable.
+    /// Kept pure and internal so it can be unit-tested without the language model
+    /// (which can't run headlessly). Mirrors exactly what the rail already shows,
+    /// so the summary can never reference a figure the user can't see.
+    func summaryFacts() -> String {
+        let scope = displayName(current?.name ?? "~")
+        var lines: [String] = []
+        lines.append("Folder: \(scope)")
+        lines.append("Total size: \(formatSize(total))")
+        lines.append(
+            mode == .type
+                ? "Breakdown by file type (largest first):"
+                : "Largest items inside (largest first):")
+        for s in segments.prefix(8) {
+            var line = "- \(s.label): \(formatSize(s.size)) (\(percent(s.size, of: total).clean)%)"
+            if s.recl > 0 { line += ", \(formatSize(s.recl)) reclaimable" }
+            lines.append(line)
+        }
+        if reclTotal > 0 {
+            let n = reclaimTargets.count
+            lines.append(
+                "Safely reclaimable in total: \(formatSize(reclTotal)) "
+                    + "across \(n) target\(n == 1 ? "" : "s") (caches, build output, dependencies, trash)."
+            )
+        } else {
+            lines.append("Nothing here is flagged as safely reclaimable.")
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    /// Kick off an on-device overview of the current scope. Called automatically
+    /// from `refresh()`; not user-invoked. Stays silent (`.idle`, so the rail
+    /// shows nothing) when the model can't run or generation fails — the feature
+    /// only ever surfaces a finished summary, never an error or a prompt.
+    private func generateSummary() {
+        guard SummaryService.isAvailable else {
+            summaryState = .idle
+            return
+        }
+        let facts = summaryFacts()
+        let epoch = summaryEpoch
+        summaryState = .loading
+        summaryTask?.cancel()
+        summaryTask = Task {
+            let insight = try? await SummaryService.summarize(facts)
+            // A navigation/rescan since we started moved us off this scope.
+            guard !Task.isCancelled, self.summaryEpoch == epoch else { return }
+            self.summaryState = insight.map(SummaryState.ready) ?? .idle
         }
     }
 
