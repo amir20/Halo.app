@@ -51,12 +51,13 @@ struct SummaryCard: View {
         }
     }
 
-    /// Shared card chrome: a glass panel inset to match the rail's rhythm.
+    /// Shared card chrome: a glass panel on the rail's 10px gutter, with its text
+    /// landing on the same 20px column as the header and the breakdown rows below.
     private func card<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
         content()
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 13).padding(.vertical, 11)
+            .padding(.horizontal, 10).padding(.vertical, 12)
             .glassEffect(.regular, in: .rect(cornerRadius: 12))
-            .padding(.horizontal, 12).padding(.top, 10)
+            .padding(.horizontal, 10).padding(.top, 10).padding(.bottom, 6)
     }
 }
