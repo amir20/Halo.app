@@ -18,7 +18,9 @@ import SwiftUI
 /// net horizontal travel must beat the vertical), so the rail's vertical scroll
 /// and ordinary mouse-wheel scrolling pass straight through. We accumulate
 /// `scrollingDeltaX` across the gesture and fire once — latched until the gesture
-/// ends — when the leftward travel crosses `triggerDistance`.
+/// ends — when the leftward travel crosses `triggerDistance`. The travel is
+/// normalized via `isDirectionInvertedFromDevice`, so a physical fingers-left
+/// swipe means "back" whether or not the user has natural scrolling enabled.
 struct SwipeBackView: NSViewRepresentable {
     /// Invoked once per leftward swipe that crosses the trigger threshold.
     var onSwipeLeft: @MainActor () -> Void
@@ -81,11 +83,16 @@ struct SwipeBackView: NSViewRepresentable {
             case .changed:
                 travelX += event.scrollingDeltaX
                 travelY += event.scrollingDeltaY
-                // With natural scrolling, a fingers-left swipe reports positive dx.
-                // Require the gesture to be horizontal-dominant so vertical and
-                // diagonal scrolls never trip it.
+                // Normalize to physical finger direction so the gesture is
+                // independent of the user's natural-scrolling setting.
+                // `scrollingDeltaX` is the content delta — the OS flips it when
+                // natural scrolling is on — so undo that flip to recover raw
+                // device motion, where a fingers-left swipe reads positive.
+                // Require horizontal dominance so vertical/diagonal scrolls never
+                // trip it.
+                let physical = event.isDirectionInvertedFromDevice ? -travelX : travelX
                 guard !fired,
-                    travelX >= triggerDistance,
+                    physical >= triggerDistance,
                     abs(travelX) > abs(travelY)
                 else { return }
                 fired = true
