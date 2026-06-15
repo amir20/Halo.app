@@ -1,5 +1,32 @@
 [
   {
+    "version": "0.1.6",
+    "tag": "v0.1.6",
+    "date": "2026-06-13",
+    "changes": [
+      {
+        "kind": "added",
+        "text": "Swipe left to go back a directory",
+        "pr": 33
+      },
+      {
+        "kind": "added",
+        "text": "Finder-style context menus and per-row proportion bars",
+        "pr": 32
+      },
+      {
+        "kind": "added",
+        "text": "Auto-generated /changelog page",
+        "pr": 31
+      },
+      {
+        "kind": "fixed",
+        "text": "Make back-swipe direction independent of scroll setting",
+        "pr": 34
+      }
+    ]
+  },
+  {
     "version": "0.1.5",
     "tag": "v0.1.5",
     "date": "2026-06-13",
