@@ -13,7 +13,7 @@ struct SpaceInsight: Equatable, Sendable {
 
     @Guide(
         description:
-            "One short, practical sentence about what is safe to clear to free space. If nothing is flagged reclaimable, say space looks well used instead of inventing cleanup advice."
+            "One short, practical sentence naming the item with the MOST reclaimable space and how much it would free — use the 'Biggest cleanup opportunities' list, which is ranked by reclaimable space, not the largest-folder list. Never recommend an item just because it is the largest folder. If nothing is flagged reclaimable, say space looks well used instead of inventing cleanup advice."
     )
     var tip: String
 }

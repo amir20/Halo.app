@@ -740,6 +740,20 @@ final class ScanModel {
                 "Safely reclaimable in total: \(formatSize(reclTotal)) "
                     + "across \(n) target\(n == 1 ? "" : "s") (caches, build output, dependencies, trash)."
             )
+            // Rank the items by *reclaimable* bytes — not total size — so the tip
+            // points at the biggest cleanup win. The largest folder is often not
+            // the most reclaimable one (e.g. a huge folder with little to clear),
+            // and without this the model anchors its advice on the wrong item.
+            let opportunities = segments
+                .filter { $0.recl > 0 }
+                .sorted { $0.recl > $1.recl }
+                .prefix(5)
+            if !opportunities.isEmpty {
+                lines.append("Biggest cleanup opportunities (most reclaimable first):")
+                for s in opportunities {
+                    lines.append("- \(s.label): \(formatSize(s.recl)) reclaimable")
+                }
+            }
         } else {
             lines.append("Nothing here is flagged as safely reclaimable.")
         }

@@ -247,6 +247,34 @@ final class ScanModelTests: XCTestCase {
         }
     }
 
+    /// The reclaim advice must rank by *reclaimable* bytes, not total size, so the
+    /// model recommends the biggest cleanup win rather than the largest folder.
+    /// In the mock tree the largest folder (Docker, ~63 GB) has only ~9 GB
+    /// reclaimable, while Library (~27 GB reclaimable) is the real opportunity.
+    func testSummaryFactsRankReclaimByReclaimableNotSize() {
+        let model = ScanModel()
+        model.load(MockTree.make())
+        let facts = model.summaryFacts()
+
+        guard let header = facts.range(of: "Biggest cleanup opportunities") else {
+            return XCTFail("facts should list ranked cleanup opportunities")
+        }
+        let ranked = String(facts[header.upperBound...])
+        guard let libIdx = ranked.range(of: "Library"),
+            let dockerIdx = ranked.range(of: "Docker")
+        else { return XCTFail("ranked list should mention both Library and Docker") }
+        XCTAssertTrue(
+            libIdx.lowerBound < dockerIdx.lowerBound,
+            "Library (more reclaimable) must rank above Docker (larger folder)")
+
+        // The largest folder by total size is Docker, but it must not lead the
+        // cleanup ranking — that's the bug being guarded against.
+        let firstBullet = ranked.split(separator: "-").dropFirst().first.map(String.init) ?? ""
+        XCTAssertFalse(
+            firstBullet.contains("Docker"),
+            "the largest folder must not be the top cleanup recommendation")
+    }
+
     /// Switching to the type lens reframes the facts as a per-type breakdown.
     func testSummaryFactsFollowTheActiveLens() {
         let model = ScanModel()
