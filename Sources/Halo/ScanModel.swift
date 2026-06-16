@@ -734,16 +734,56 @@ final class ScanModel {
             if s.recl > 0 { line += ", \(formatSize(s.recl)) reclaimable" }
             lines.append(line)
         }
-        if reclTotal > 0 {
-            let n = reclaimTargets.count
+        if let cur = current, reclTotal > 0 {
+            // Go holistic: rank the actual reclaimable directories *anywhere* in the
+            // subtree (the maximal reclaim roots, N levels deep), not just the
+            // top-level segments. The biggest win is usually buried — DerivedData,
+            // a deep node_modules, a cache — so a summary built only from the
+            // current folder's direct children misses it. These are exactly the
+            // rows the reclaim review sheet shows, so no figure is invented.
+            let roots = Derive.reclaimRoots(cur).sorted { $0.size > $1.size }
+            let highTotal = roots
+                .filter { $0.reclaim?.confidence == .high }
+                .reduce(0) { $0 + $1.size }
+            // Precompute the totals so the model never has to add figures itself —
+            // it kept botching that (naming several items but quoting one's number).
             lines.append(
-                "Safely reclaimable in total: \(formatSize(reclTotal)) "
-                    + "across \(n) target\(n == 1 ? "" : "s") (caches, build output, dependencies, trash)."
-            )
+                "Reclaimable in total (everything flagged, includes items to review first): "
+                    + formatSize(reclTotal) + ".")
+            if highTotal > 0 {
+                lines.append(
+                    "Of that, safe to clear right away (high confidence): "
+                        + formatSize(highTotal) + ".")
+            }
+            lines.append(
+                "Biggest directories worth clearing (anywhere inside, largest first; "
+                    + "quote one figure exactly, never add them):")
+            for r in roots.prefix(8) {
+                let safe = r.reclaim?.confidence == .high
+                let note = safe ? "high confidence, safe to clear" : "review before clearing"
+                lines.append(
+                    "- \(reclaimLocation(of: r, in: cur)): \(formatSize(r.size)) "
+                        + "— \(r.category.label), \(note).")
+            }
         } else {
             lines.append("Nothing here is flagged as safely reclaimable.")
         }
         return lines.joined(separator: "\n")
+    }
+
+    /// A reclaim root's location relative to the scoped folder, e.g.
+    /// "Library/Developer/DerivedData", so the model can point the user at the
+    /// directory N levels in — not just name a leaf that may appear many times
+    /// (every project has a `node_modules`). Falls back to the scope's own name
+    /// when the root *is* the scope.
+    private func reclaimLocation(of node: DirNode, in scope: DirNode) -> String {
+        var comps: [String] = []
+        var n: DirNode? = node
+        while let x = n, x !== scope {
+            comps.append(x.name)
+            n = x.parent
+        }
+        return comps.isEmpty ? displayName(scope.name) : comps.reversed().joined(separator: "/")
     }
 
     /// Kick off an on-device overview of the current scope. Called automatically

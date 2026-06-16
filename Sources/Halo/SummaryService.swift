@@ -13,7 +13,7 @@ struct SpaceInsight: Equatable, Sendable {
 
     @Guide(
         description:
-            "One short, practical sentence about what is safe to clear to free space. If nothing is flagged reclaimable, say space looks well used instead of inventing cleanup advice."
+            "One short, practical sentence about what to clear to free the most space. Draw from the 'Biggest directories worth clearing' list, which ranks the actual reclaimable directories anywhere inside this folder (often several levels deep) by size. Point at the top one or two by their location path, and prefer high-confidence 'safe to clear' items, flagging anything that should be reviewed first. CRITICAL: quote a size verbatim from the facts — never add two figures together; to refer to everything, quote the 'Reclaimable in total' figure, or the 'safe to clear right away' figure for the safe subset. If nothing is flagged reclaimable, say space looks well used instead of inventing cleanup advice."
     )
     var tip: String
 }
@@ -46,6 +46,10 @@ enum SummaryService {
         folder's largest items with their sizes, and how much is safely reclaimable. \
         Be concise, concrete, and friendly — like a knowledgeable colleague. Refer \
         only to the figures and names provided; do not invent files, sizes, or paths. \
+        Never do arithmetic: quote a size exactly as it appears — do not add two \
+        figures together. When you name what to clear, use the reclaimable figure of \
+        the item you name, or one of the provided totals. Some items are flagged \
+        high-confidence (safe to clear) and others need review first — respect that. \
         Keep each field to a single sentence.
         """
 

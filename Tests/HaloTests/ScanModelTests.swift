@@ -239,12 +239,81 @@ final class ScanModelTests: XCTestCase {
         XCTAssertTrue(facts.contains("Folder: ~"), "names the scanned root")
         XCTAssertTrue(facts.contains("Total size:"), "states the total")
         XCTAssertTrue(facts.contains("Largest items inside"), "folder-lens framing")
-        XCTAssertTrue(facts.contains("Safely reclaimable in total:"), "states reclaimable total")
+        XCTAssertTrue(facts.contains("Reclaimable in total"), "states reclaimable total")
         // Every line's figure must be one the rail also renders for a segment.
         for seg in model.segments.prefix(8) {
             XCTAssertTrue(
                 facts.contains(seg.label), "facts mention the \(seg.label) segment")
         }
+    }
+
+    /// The cleanup list is holistic: it ranks the actual reclaimable directories
+    /// *anywhere* in the subtree by size, not just the current folder's direct
+    /// children. In the mock tree the biggest reclaim root is
+    /// Library/Developer/DerivedData (16 GB) — two levels deep — while the largest
+    /// folder (Docker, ~63 GB) is mostly non-reclaimable and must not lead.
+    func testSummaryFactsRankBiggestPurgeableDirectoriesDeep() {
+        let model = ScanModel()
+        model.load(MockTree.make())
+        let facts = model.summaryFacts()
+
+        guard let header = facts.range(of: "Biggest directories worth clearing") else {
+            return XCTFail("facts should list the biggest purgeable directories")
+        }
+        let bullets = facts[header.upperBound...].split(separator: "\n").filter {
+            $0.hasPrefix("- ")
+        }
+        guard let first = bullets.first.map(String.init) else {
+            return XCTFail("expected at least one purgeable directory")
+        }
+        XCTAssertTrue(
+            first.contains("Library/Developer/DerivedData"),
+            "leads with the biggest reclaim root, named by its deep path")
+        XCTAssertFalse(
+            first.contains("Docker"), "the largest folder must not lead the purge list")
+    }
+
+    /// The facts must tell the model which reclaimable directories are
+    /// high-confidence (safe to clear) versus what needs review, and must
+    /// precompute the totals so the model never has to add figures itself (it was
+    /// naming several items but quoting one's number). Build a folder mixing a
+    /// high- and a medium-confidence reclaim root so both tiers appear.
+    func testSummaryFactsCarryConfidenceAndPrecomputedTotals() {
+        let GB = Self.GB
+        let derived = DirNode(
+            name: "DerivedData", category: .build,
+            reclaim: ReclaimMark(confidence: .high, signal: .knownName, reason: "build output"),
+            fileBytes: [.build: 10 * GB], children: [])
+        let cache = DirNode(
+            name: "SomeCache", category: .cache,
+            reclaim: ReclaimMark(confidence: .medium, signal: .knownName, reason: "cache"),
+            fileBytes: [.cache: 4 * GB], children: [])
+        let dev = DirNode(
+            name: "Developer", category: .build, reclaim: nil,
+            fileBytes: [:], children: [derived, cache])
+        let root = DirNode(
+            name: "home", category: .other, reclaim: nil, fileBytes: [:], children: [dev])
+
+        let model = ScanModel()
+        model.load(root)
+        let facts = model.summaryFacts()
+
+        XCTAssertTrue(
+            facts.contains("safe to clear right away (high confidence): 10"),
+            "precomputes the high-confidence total so the model needn't add")
+        let lines = facts.split(separator: "\n")
+        guard let highLine = lines.first(where: { $0.contains("DerivedData") && $0.hasPrefix("- ") })
+        else { return XCTFail("expected a DerivedData purge line") }
+        XCTAssertTrue(
+            highLine.contains("high confidence, safe to clear"),
+            "the high-confidence root is marked safe to clear")
+        guard let medLine = lines.first(where: { $0.contains("SomeCache") && $0.hasPrefix("- ") })
+        else { return XCTFail("expected a SomeCache purge line") }
+        XCTAssertTrue(
+            medLine.contains("review before clearing"),
+            "the medium-confidence root is marked for review")
+        XCTAssertTrue(
+            facts.contains("never add them"), "instructs the model not to sum figures")
     }
 
     /// Switching to the type lens reframes the facts as a per-type breakdown.
