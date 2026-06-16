@@ -247,39 +247,37 @@ final class ScanModelTests: XCTestCase {
         }
     }
 
-    /// The reclaim advice must rank by *reclaimable* bytes, not total size, so the
-    /// model recommends the biggest cleanup win rather than the largest folder.
-    /// In the mock tree the largest folder (Docker, ~63 GB) has only ~9 GB
-    /// reclaimable, while Library (~27 GB reclaimable) is the real opportunity.
-    func testSummaryFactsRankReclaimByReclaimableNotSize() {
+    /// The cleanup list is holistic: it ranks the actual reclaimable directories
+    /// *anywhere* in the subtree by size, not just the current folder's direct
+    /// children. In the mock tree the biggest reclaim root is
+    /// Library/Developer/DerivedData (16 GB) — two levels deep — while the largest
+    /// folder (Docker, ~63 GB) is mostly non-reclaimable and must not lead.
+    func testSummaryFactsRankBiggestPurgeableDirectoriesDeep() {
         let model = ScanModel()
         model.load(MockTree.make())
         let facts = model.summaryFacts()
 
-        guard let header = facts.range(of: "Biggest cleanup opportunities") else {
-            return XCTFail("facts should list ranked cleanup opportunities")
+        guard let header = facts.range(of: "Biggest directories worth clearing") else {
+            return XCTFail("facts should list the biggest purgeable directories")
         }
-        let ranked = String(facts[header.upperBound...])
-        guard let libIdx = ranked.range(of: "Library"),
-            let dockerIdx = ranked.range(of: "Docker")
-        else { return XCTFail("ranked list should mention both Library and Docker") }
+        let bullets = facts[header.upperBound...].split(separator: "\n").filter {
+            $0.hasPrefix("- ")
+        }
+        guard let first = bullets.first.map(String.init) else {
+            return XCTFail("expected at least one purgeable directory")
+        }
         XCTAssertTrue(
-            libIdx.lowerBound < dockerIdx.lowerBound,
-            "Library (more reclaimable) must rank above Docker (larger folder)")
-
-        // The largest folder by total size is Docker, but it must not lead the
-        // cleanup ranking — that's the bug being guarded against.
-        let firstBullet = ranked.split(separator: "-").dropFirst().first.map(String.init) ?? ""
+            first.contains("Library/Developer/DerivedData"),
+            "leads with the biggest reclaim root, named by its deep path")
         XCTAssertFalse(
-            firstBullet.contains("Docker"),
-            "the largest folder must not be the top cleanup recommendation")
+            first.contains("Docker"), "the largest folder must not lead the purge list")
     }
 
-    /// The facts must tell the model which reclaimable space is high-confidence
-    /// (safe to clear) versus what needs review, and must precompute the totals so
-    /// the model never has to add figures itself (it was naming two items but
-    /// quoting one's number). Build a folder mixing a high- and a medium-confidence
-    /// reclaim root so both tiers appear.
+    /// The facts must tell the model which reclaimable directories are
+    /// high-confidence (safe to clear) versus what needs review, and must
+    /// precompute the totals so the model never has to add figures itself (it was
+    /// naming several items but quoting one's number). Build a folder mixing a
+    /// high- and a medium-confidence reclaim root so both tiers appear.
     func testSummaryFactsCarryConfidenceAndPrecomputedTotals() {
         let GB = Self.GB
         let derived = DirNode(
@@ -303,21 +301,19 @@ final class ScanModelTests: XCTestCase {
         XCTAssertTrue(
             facts.contains("safe to clear right away (high confidence): 10"),
             "precomputes the high-confidence total so the model needn't add")
-        // The Developer opportunity mixes both tiers, so its line names both. Scope
-        // to the cleanup-opportunities section so we don't match the size breakdown.
-        guard let header = facts.range(of: "Biggest cleanup opportunities") else {
-            return XCTFail("facts should list ranked cleanup opportunities")
-        }
-        guard
-            let line = facts[header.upperBound...].split(separator: "\n").first(where: {
-                $0.contains("Developer:")
-            })
-        else { return XCTFail("expected a Developer cleanup line") }
-        XCTAssertTrue(line.contains("safe to clear"), "names the high-confidence portion")
-        XCTAssertTrue(line.contains("to review first"), "flags the medium-confidence portion")
+        let lines = facts.split(separator: "\n")
+        guard let highLine = lines.first(where: { $0.contains("DerivedData") && $0.hasPrefix("- ") })
+        else { return XCTFail("expected a DerivedData purge line") }
         XCTAssertTrue(
-            facts.contains("never add them"),
-            "instructs the model not to sum figures")
+            highLine.contains("high confidence, safe to clear"),
+            "the high-confidence root is marked safe to clear")
+        guard let medLine = lines.first(where: { $0.contains("SomeCache") && $0.hasPrefix("- ") })
+        else { return XCTFail("expected a SomeCache purge line") }
+        XCTAssertTrue(
+            medLine.contains("review before clearing"),
+            "the medium-confidence root is marked for review")
+        XCTAssertTrue(
+            facts.contains("never add them"), "instructs the model not to sum figures")
     }
 
     /// Switching to the type lens reframes the facts as a per-type breakdown.
