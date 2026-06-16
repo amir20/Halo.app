@@ -13,7 +13,7 @@ struct SpaceInsight: Equatable, Sendable {
 
     @Guide(
         description:
-            "One short, practical sentence naming the item with the MOST reclaimable space and how much it would free — use the 'Biggest cleanup opportunities' list, which is ranked by reclaimable space, not the largest-folder list. Never recommend an item just because it is the largest folder. If nothing is flagged reclaimable, say space looks well used instead of inventing cleanup advice."
+            "One short, practical sentence about what to clear to free space. Name the single biggest cleanup opportunity (top of the 'Biggest cleanup opportunities' list, which is ranked by reclaimable space — not the largest-folder list) and quote ITS reclaimable figure exactly as written. CRITICAL: quote a number verbatim from the facts — never add two figures together; if you mean everything, quote the 'Reclaimable in total' figure. Prefer the high-confidence 'safe to clear' figure and flag when an item should be reviewed first. If nothing is flagged reclaimable, say space looks well used instead of inventing cleanup advice."
     )
     var tip: String
 }
@@ -46,6 +46,10 @@ enum SummaryService {
         folder's largest items with their sizes, and how much is safely reclaimable. \
         Be concise, concrete, and friendly — like a knowledgeable colleague. Refer \
         only to the figures and names provided; do not invent files, sizes, or paths. \
+        Never do arithmetic: quote a size exactly as it appears — do not add two \
+        figures together. When you name what to clear, use the reclaimable figure of \
+        the item you name, or one of the provided totals. Some items are flagged \
+        high-confidence (safe to clear) and others need review first — respect that. \
         Keep each field to a single sentence.
         """
 

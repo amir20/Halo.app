@@ -239,7 +239,7 @@ final class ScanModelTests: XCTestCase {
         XCTAssertTrue(facts.contains("Folder: ~"), "names the scanned root")
         XCTAssertTrue(facts.contains("Total size:"), "states the total")
         XCTAssertTrue(facts.contains("Largest items inside"), "folder-lens framing")
-        XCTAssertTrue(facts.contains("Safely reclaimable in total:"), "states reclaimable total")
+        XCTAssertTrue(facts.contains("Reclaimable in total"), "states reclaimable total")
         // Every line's figure must be one the rail also renders for a segment.
         for seg in model.segments.prefix(8) {
             XCTAssertTrue(
@@ -273,6 +273,51 @@ final class ScanModelTests: XCTestCase {
         XCTAssertFalse(
             firstBullet.contains("Docker"),
             "the largest folder must not be the top cleanup recommendation")
+    }
+
+    /// The facts must tell the model which reclaimable space is high-confidence
+    /// (safe to clear) versus what needs review, and must precompute the totals so
+    /// the model never has to add figures itself (it was naming two items but
+    /// quoting one's number). Build a folder mixing a high- and a medium-confidence
+    /// reclaim root so both tiers appear.
+    func testSummaryFactsCarryConfidenceAndPrecomputedTotals() {
+        let GB = Self.GB
+        let derived = DirNode(
+            name: "DerivedData", category: .build,
+            reclaim: ReclaimMark(confidence: .high, signal: .knownName, reason: "build output"),
+            fileBytes: [.build: 10 * GB], children: [])
+        let cache = DirNode(
+            name: "SomeCache", category: .cache,
+            reclaim: ReclaimMark(confidence: .medium, signal: .knownName, reason: "cache"),
+            fileBytes: [.cache: 4 * GB], children: [])
+        let dev = DirNode(
+            name: "Developer", category: .build, reclaim: nil,
+            fileBytes: [:], children: [derived, cache])
+        let root = DirNode(
+            name: "home", category: .other, reclaim: nil, fileBytes: [:], children: [dev])
+
+        let model = ScanModel()
+        model.load(root)
+        let facts = model.summaryFacts()
+
+        XCTAssertTrue(
+            facts.contains("safe to clear right away (high confidence): 10"),
+            "precomputes the high-confidence total so the model needn't add")
+        // The Developer opportunity mixes both tiers, so its line names both. Scope
+        // to the cleanup-opportunities section so we don't match the size breakdown.
+        guard let header = facts.range(of: "Biggest cleanup opportunities") else {
+            return XCTFail("facts should list ranked cleanup opportunities")
+        }
+        guard
+            let line = facts[header.upperBound...].split(separator: "\n").first(where: {
+                $0.contains("Developer:")
+            })
+        else { return XCTFail("expected a Developer cleanup line") }
+        XCTAssertTrue(line.contains("safe to clear"), "names the high-confidence portion")
+        XCTAssertTrue(line.contains("to review first"), "flags the medium-confidence portion")
+        XCTAssertTrue(
+            facts.contains("never add them"),
+            "instructs the model not to sum figures")
     }
 
     /// Switching to the type lens reframes the facts as a per-type breakdown.

@@ -735,11 +735,23 @@ final class ScanModel {
             lines.append(line)
         }
         if reclTotal > 0 {
-            let n = reclaimTargets.count
+            // The reclaim roots in this scope, split by how safe-to-clear the
+            // evidence is. `high` is safe to clear outright; `medium` is worth
+            // reviewing first. Precompute the totals so the model never has to add
+            // figures itself — it kept botching that (e.g. naming two items but
+            // quoting one's number). The model must quote a figure verbatim.
+            let roots = current.map(Derive.reclaimRoots) ?? []
+            let highTotal = roots
+                .filter { $0.reclaim?.confidence == .high }
+                .reduce(0) { $0 + $1.size }
             lines.append(
-                "Safely reclaimable in total: \(formatSize(reclTotal)) "
-                    + "across \(n) target\(n == 1 ? "" : "s") (caches, build output, dependencies, trash)."
-            )
+                "Reclaimable in total (everything flagged, includes items to review first): "
+                    + formatSize(reclTotal) + ".")
+            if highTotal > 0 {
+                lines.append(
+                    "Of that, safe to clear right away (high confidence): "
+                        + formatSize(highTotal) + ".")
+            }
             // Rank the items by *reclaimable* bytes — not total size — so the tip
             // points at the biggest cleanup win. The largest folder is often not
             // the most reclaimable one (e.g. a huge folder with little to clear),
@@ -749,15 +761,42 @@ final class ScanModel {
                 .sorted { $0.recl > $1.recl }
                 .prefix(5)
             if !opportunities.isEmpty {
-                lines.append("Biggest cleanup opportunities (most reclaimable first):")
+                lines.append(
+                    "Biggest cleanup opportunities (most reclaimable first; quote one figure exactly, never add them):"
+                )
                 for s in opportunities {
-                    lines.append("- \(s.label): \(formatSize(s.recl)) reclaimable")
+                    let c = reclaimConfidence(for: s, roots: roots)
+                    lines.append(
+                        "- \(s.label): \(formatSize(s.recl)) reclaimable — \(confidenceNote(c)).")
                 }
             }
         } else {
             lines.append("Nothing here is flagged as safely reclaimable.")
         }
         return lines.joined(separator: "\n")
+    }
+
+    /// High- vs medium-confidence reclaimable bytes behind one segment, summed
+    /// from its maximal reclaim roots. Folder-lens segments carry their node;
+    /// type-lens segments don't, so fall back to the scope's roots of that
+    /// category (which is exactly how `typeReclaim` sums them).
+    private func reclaimConfidence(for s: Segment, roots: [DirNode])
+        -> (high: Int64, medium: Int64)
+    {
+        let relevant = s.node.map(Derive.reclaimRoots) ?? roots.filter { $0.category == s.category }
+        var high: Int64 = 0
+        var medium: Int64 = 0
+        for r in relevant {
+            if r.reclaim?.confidence == .high { high += r.size } else { medium += r.size }
+        }
+        return (high, medium)
+    }
+
+    /// Plain-language confidence note for one opportunity.
+    private func confidenceNote(_ c: (high: Int64, medium: Int64)) -> String {
+        if c.medium == 0 { return "high confidence, safe to clear" }
+        if c.high == 0 { return "review before clearing" }
+        return "\(formatSize(c.high)) safe to clear, \(formatSize(c.medium)) to review first"
     }
 
     /// Kick off an on-device overview of the current scope. Called automatically
