@@ -23,7 +23,7 @@ jobs:
       run:
         working-directory: docs
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           # Full history + tags so scripts/gen-changelog.mjs can derive the
           # changelog from every release tag (default checkout is shallow).
